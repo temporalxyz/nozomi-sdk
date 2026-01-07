@@ -15,7 +15,7 @@ npm install @temporalxyz/nozomi-sdk
 ```typescript
 import { findFastestEndpoints } from '@temporalxyz/nozomi-sdk';
 
-// Find the 2 fastest regional endpoints + auto-routed fallback
+// Find the 4 fastest endpoints + auto-routed fallback
 const endpoints = await findFastestEndpoints();
 
 console.log(endpoints);
@@ -155,7 +155,7 @@ Returns a promise that resolves to an array of `EndpointResult` objects.
 |--------|------|---------|-------------|
 | `pingCount` | number | 5 | Number of measurement pings (1-20) |
 | `warmupCount` | number | 2 | Number of warmup pings (0-5) |
-| `topCount` | number | 2 | Number of top results to return (1-10) |
+| `topCount` | number | 4 | Number of top results to return (1-10) |
 | `timeout` | number | 5000 | Timeout per ping in ms (1000-30000) |
 | `includeAutoRouted` | boolean | true | Include auto-routed endpoint |
 | `endpoint` | string | '/ping' | Ping endpoint path |
@@ -191,7 +191,7 @@ import {
 
 - **Zero dependencies** - works in Node.js and browsers
 - **Never throws** - always returns valid results with fallbacks
-- **Region deduplication** - returns only the fastest endpoint per region
+- **Sorted by latency** - returns endpoints ordered by response time
 - **Warmup pings** - accounts for TLS/TCP connection setup
 - **Remote config** - fetches latest endpoints from GitHub with fallback
 - **Fully typed** - complete TypeScript definitions

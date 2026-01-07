@@ -151,7 +151,7 @@ export interface NozomiClientOptions {
   pingCount?: number;
   /** Default number of warmup pings (0-5, default: 2) */
   warmupCount?: number;
-  /** Default number of top endpoints to return (1-10, default: 2) */
+  /** Default number of top endpoints to return (1-10, default: 4) */
   topCount?: number;
   /** Default timeout per ping in ms (1000-30000, default: 5000) */
   timeout?: number;
@@ -255,7 +255,7 @@ export class NozomiClient {
  *
  * NEVER THROWS - always returns at least the auto-routed endpoint.
  *
- * By default returns [2 fastest regional endpoints, auto-routed endpoint].
+ * By default returns [4 fastest endpoints, auto-routed endpoint].
  */
 export async function findFastestEndpoints(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
   try {
@@ -265,7 +265,7 @@ export async function findFastestEndpoints(options: FindFastestOptions = {}): Pr
 
     // Config with defaults
     const pingCount = Math.max(1, Math.min(20, options.pingCount ?? 5));
-    const topCount = Math.max(1, Math.min(10, options.topCount ?? 2));
+    const topCount = Math.max(1, Math.min(10, options.topCount ?? 4));
     const timeout = Math.max(1000, Math.min(30000, options.timeout ?? 5000));
     const warmupCount = Math.max(0, Math.min(5, options.warmupCount ?? 2));
     const endpoint = options.endpoint ?? '/ping';
@@ -280,42 +280,21 @@ export async function findFastestEndpoints(options: FindFastestOptions = {}): Pr
       })
     );
 
-    // Filter and sort
+    // Filter and sort by latency
     const validResults = results
       .filter(r => r.minTime !== Infinity && isFinite(r.minTime))
       .sort((a, b) => a.minTime - b.minTime);
 
-    // Deduplicate by region
     let topResults: EndpointResult[];
 
     if (includeAutoRouted) {
       const nonAutoResults = validResults.filter(r => r.region !== 'auto');
-      const seenRegions = new Set<string>();
-      const deduped: EndpointResult[] = [];
-
-      for (const result of nonAutoResults) {
-        if (!seenRegions.has(result.region)) {
-          seenRegions.add(result.region);
-          deduped.push(result);
-        }
-      }
-
-      topResults = deduped.slice(0, topCount);
+      topResults = nonAutoResults.slice(0, topCount);
 
       const autoResult = validResults.find(r => r.region === 'auto');
       topResults.push(autoResult ?? { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: Infinity, times: [], warmupTimes: [] });
     } else {
-      const seenRegions = new Set<string>();
-      const deduped: EndpointResult[] = [];
-
-      for (const result of validResults) {
-        if (!seenRegions.has(result.region)) {
-          seenRegions.add(result.region);
-          deduped.push(result);
-        }
-      }
-
-      topResults = deduped.slice(0, topCount);
+      topResults = validResults.slice(0, topCount);
     }
 
     // Always return at least one endpoint
