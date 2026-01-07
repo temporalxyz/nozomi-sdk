@@ -1,6 +1,6 @@
 {
   "name": "@temporalxyz/nozomi-sdk",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Find the fastest Nozomi endpoints for optimal transaction submission",
   "type": "module",
   "main": "dist/index.cjs",
