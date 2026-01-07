@@ -1,6 +1,6 @@
 {
-  "name": "nozomi-sdk",
-  "version": "1.0.2",
+  "name": "@temporalxyz/nozomi-sdk",
+  "version": "1.0.0",
   "description": "Find the fastest Nozomi endpoints for optimal transaction submission",
   "type": "module",
   "main": "dist/index.cjs",
@@ -31,6 +31,14 @@
     "transactions",
     "latency"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/temporalxyz/nozomi-sdk.git"
+  },
+  "homepage": "https://github.com/temporalxyz/nozomi-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/temporalxyz/nozomi-sdk/issues"
+  },
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^25.0.3",

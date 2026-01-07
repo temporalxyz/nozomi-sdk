@@ -9,7 +9,7 @@
  *   NOZOMI_API_KEY      - Your Nozomi API key
  *   SOLANA_PRIVATE_KEY  - JSON array of your wallet's secret key bytes
  */
-import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from 'nozomi-sdk';
+import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '@temporalxyz/nozomi-sdk';
 // For local development: import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '../src/index';
 
 // Debug logging utility
@@ -71,9 +71,9 @@ async function findSingleFastest() {
 
 // Example 3: Test only direct endpoints (no Cloudflare)
 async function testDirectOnly() {
-  const directEndpoints = NOZOMI_ENDPOINTS.filter(url => /\d\.nozomi/.test(url));
+  const directEndpoints = NOZOMI_ENDPOINTS.filter(ep => ep.type === 'direct');
   const fastest = await findFastestEndpoints({
-    urls: directEndpoints,
+    endpoints: directEndpoints,
     topCount: 3
   });
   console.log('Fastest direct endpoints:', fastest);
@@ -81,12 +81,10 @@ async function testDirectOnly() {
 
 // Example 4: Test only Cloudflare endpoints
 async function testCfOnly() {
-  const cfEndpoints = NOZOMI_ENDPOINTS.filter(url =>
-    !url.includes('nozomi.temporal.xyz') || url.match(/[a-z]\.nozomi/)
-  ).filter(url => !/\d\.nozomi/.test(url));
+  const cfEndpoints = NOZOMI_ENDPOINTS.filter(ep => ep.type === 'cloudflare');
 
   const fastest = await findFastestEndpoints({
-    urls: cfEndpoints,
+    endpoints: cfEndpoints,
     topCount: 3
   });
   console.log('Fastest CF endpoints:', fastest);

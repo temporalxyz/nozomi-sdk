@@ -5,7 +5,7 @@ Find the fastest Nozomi endpoints for optimal Solana transaction submission.
 ## Installation
 
 ```bash
-npm install nozomi-sdk
+npm install @temporalxyz/nozomi-sdk
 ```
 
 ## Usage
@@ -13,7 +13,7 @@ npm install nozomi-sdk
 ### Basic Usage
 
 ```typescript
-import { findFastestEndpoints } from 'nozomi-sdk';
+import { findFastestEndpoints } from '@temporalxyz/nozomi-sdk';
 
 // Find the 2 fastest regional endpoints + auto-routed fallback
 const endpoints = await findFastestEndpoints();
@@ -37,7 +37,7 @@ console.log(`Fastest: ${fastest.url} (${fastest.minTime.toFixed(2)}ms)`);
 
 ```typescript
 import { Connection, Keypair, Transaction } from '@solana/web3.js';
-import { findFastestEndpoints } from 'nozomi-sdk';
+import { findFastestEndpoints } from '@temporalxyz/nozomi-sdk';
 
 const [fastest] = await findFastestEndpoints({ topCount: 1 });
 
@@ -146,7 +146,7 @@ import {
   NOZOMI_ENDPOINTS,      // Hardcoded fallback endpoints
   NOZOMI_AUTO_ENDPOINT,  // Auto-routed endpoint URL
   NOZOMI_ENDPOINTS_URL   // Default endpoints JSON URL
-} from 'nozomi-sdk';
+} from '@temporalxyz/nozomi-sdk';
 ```
 
 ## Features
