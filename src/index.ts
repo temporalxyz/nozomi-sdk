@@ -146,6 +146,110 @@ async function pingEndpoint(
 // PUBLIC API
 // ============================================================================
 
+export interface NozomiClientOptions {
+  /** Default number of measurement pings (1-20, default: 5) */
+  pingCount?: number;
+  /** Default number of warmup pings (0-5, default: 2) */
+  warmupCount?: number;
+  /** Default number of top endpoints to return (1-10, default: 2) */
+  topCount?: number;
+  /** Default timeout per ping in ms (1000-30000, default: 5000) */
+  timeout?: number;
+  /** Default ping endpoint path (default: '/ping') */
+  endpoint?: string;
+  /** Include auto-routed endpoint in results (default: true) */
+  includeAutoRouted?: boolean;
+  /** Custom endpoint configs (skips remote fetch) */
+  endpoints?: EndpointConfig[];
+  /** Custom endpoints URL */
+  endpointsUrl?: string;
+}
+
+/**
+ * Nozomi Client for interacting with Nozomi endpoints.
+ *
+ * Provides a convenient way to find fastest endpoints and build RPC URLs
+ * with your API key automatically included.
+ */
+export class NozomiClient {
+  private readonly clientId: string;
+  private readonly defaultOptions: NozomiClientOptions;
+  private cachedEndpoints: EndpointResult[] | null = null;
+
+  /**
+   * Create a new NozomiClient.
+   *
+   * @param clientId - Your Nozomi API key
+   * @param options - Default options for endpoint discovery
+   */
+  constructor(clientId: string, options: NozomiClientOptions = {}) {
+    this.clientId = clientId;
+    this.defaultOptions = options;
+  }
+
+  /**
+   * Find the fastest Nozomi endpoints.
+   *
+   * NEVER THROWS - always returns at least the auto-routed endpoint.
+   *
+   * @param options - Override default options for this call
+   */
+  async findFastestEndpoints(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
+    const mergedOptions = { ...this.defaultOptions, ...options };
+    return findFastestEndpoints(mergedOptions);
+  }
+
+  /**
+   * Get the RPC URL for an endpoint with API key included.
+   *
+   * @param endpoint - EndpointResult object or URL string
+   */
+  getEndpointUrl(endpoint: EndpointResult | string): string {
+    const url = typeof endpoint === 'string' ? endpoint : endpoint.url;
+    return `${url.replace(/\/+$/, '')}/?c=${this.clientId}`;
+  }
+
+  /**
+   * Find the fastest endpoint and return its RPC URL with API key.
+   *
+   * NEVER THROWS - always returns a valid URL.
+   *
+   * @param options - Override default options for this call
+   */
+  async getFastestEndpointUrl(options: FindFastestOptions = {}): Promise<string> {
+    const mergedOptions = { ...this.defaultOptions, ...options, topCount: 1 };
+    const [fastest] = await findFastestEndpoints(mergedOptions);
+    return this.getEndpointUrl(fastest);
+  }
+
+  /**
+   * Get cached endpoints or fetch if not cached.
+   *
+   * Call refresh() to update the cache.
+   */
+  async getEndpoints(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
+    if (!this.cachedEndpoints) {
+      this.cachedEndpoints = await this.findFastestEndpoints(options);
+    }
+    return this.cachedEndpoints;
+  }
+
+  /**
+   * Refresh the cached endpoints.
+   */
+  async refresh(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
+    this.cachedEndpoints = await this.findFastestEndpoints(options);
+    return this.cachedEndpoints;
+  }
+
+  /**
+   * Clear the cached endpoints.
+   */
+  clearCache(): void {
+    this.cachedEndpoints = null;
+  }
+}
+
 /**
  * Find the fastest Nozomi endpoints.
  *

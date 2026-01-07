@@ -26,6 +26,27 @@ console.log(endpoints);
 // ]
 ```
 
+### Using NozomiClient (Recommended)
+
+```typescript
+import { NozomiClient } from '@temporalxyz/nozomi-sdk';
+
+const client = new NozomiClient('YOUR_API_KEY', {
+  topCount: 3,
+  timeout: 3000
+});
+
+// Find fastest endpoints
+const endpoints = await client.findFastestEndpoints();
+
+// Get RPC URL with API key included
+const rpcUrl = client.getEndpointUrl(endpoints[0]);
+// => "https://pit1.nozomi.temporal.xyz/?c=YOUR_API_KEY"
+
+// Or get the fastest endpoint URL directly
+const fastestUrl = await client.getFastestEndpointUrl();
+```
+
 ### Find Single Fastest
 
 ```typescript
@@ -107,6 +128,21 @@ for (const endpoint of endpoints) {
 
 ## API Reference
 
+### `NozomiClient`
+
+```typescript
+const client = new NozomiClient(clientId: string, options?: NozomiClientOptions);
+```
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `findFastestEndpoints(options?)` | `Promise<EndpointResult[]>` | Find fastest endpoints |
+| `getEndpointUrl(endpoint)` | `string` | Get RPC URL with API key |
+| `getFastestEndpointUrl(options?)` | `Promise<string>` | Get fastest RPC URL directly |
+| `getEndpoints(options?)` | `Promise<EndpointResult[]>` | Get cached endpoints |
+| `refresh(options?)` | `Promise<EndpointResult[]>` | Refresh cached endpoints |
+| `clearCache()` | `void` | Clear endpoint cache |
+
 ### `findFastestEndpoints(options?)`
 
 Returns a promise that resolves to an array of `EndpointResult` objects.
@@ -139,10 +175,12 @@ interface EndpointResult {
 }
 ```
 
-### Constants
+### Exports
 
 ```typescript
 import {
+  NozomiClient,          // Client class (recommended)
+  findFastestEndpoints,  // Standalone function
   NOZOMI_ENDPOINTS,      // Hardcoded fallback endpoints
   NOZOMI_AUTO_ENDPOINT,  // Auto-routed endpoint URL
   NOZOMI_ENDPOINTS_URL   // Default endpoints JSON URL

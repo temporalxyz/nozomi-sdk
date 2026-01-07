@@ -9,8 +9,8 @@
  *   NOZOMI_API_KEY      - Your Nozomi API key
  *   SOLANA_PRIVATE_KEY  - JSON array of your wallet's secret key bytes
  */
-import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '@temporalxyz/nozomi-sdk';
-// For local development: import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '../src/index';
+import { findFastestEndpoints, NozomiClient, NOZOMI_ENDPOINTS, EndpointResult } from '@temporalxyz/nozomi-sdk';
+// For local development: import { findFastestEndpoints, NozomiClient, NOZOMI_ENDPOINTS, EndpointResult } from '../src/index';
 
 // Debug logging utility
 const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
@@ -282,6 +282,49 @@ async function sendWithFallback(signedTxBytes: Uint8Array) {
 
   debug('All endpoints failed');
   throw new Error('All endpoints failed');
+}
+
+// Example 8: Using NozomiClient (recommended)
+async function usingNozomiClient() {
+  const API_KEY = process.env.NOZOMI_API_KEY || 'YOUR_API_KEY';
+
+  // Initialize client with your API key and default options
+  const client = new NozomiClient(API_KEY, {
+    topCount: 3,
+    timeout: 3000
+  });
+
+  // Find fastest endpoints
+  const endpoints = await client.findFastestEndpoints();
+  console.log('Fastest endpoints:', endpoints.map(e => e.url));
+
+  // Get RPC URL with API key included
+  const rpcUrl = client.getEndpointUrl(endpoints[0]);
+  console.log('RPC URL:', rpcUrl);
+
+  // Or get the fastest endpoint URL directly
+  const fastestUrl = await client.getFastestEndpointUrl();
+  console.log('Fastest RPC URL:', fastestUrl);
+}
+
+// Example 9: NozomiClient with Solana
+async function nozomiClientWithSolana() {
+  const { Connection, PublicKey } = await import('@solana/web3.js');
+
+  const client = new NozomiClient(process.env.NOZOMI_API_KEY || 'YOUR_API_KEY');
+
+  // Get cached endpoints (fetches once, reuses after)
+  const endpoints = await client.getEndpoints();
+
+  // Create connection with the fastest endpoint
+  const connection = new Connection(client.getEndpointUrl(endpoints[0]), 'confirmed');
+
+  // Use the connection
+  const balance = await connection.getBalance(new PublicKey('11111111111111111111111111111111'));
+  console.log('Balance:', balance);
+
+  // Refresh endpoints periodically if needed
+  await client.refresh();
 }
 
 // Run examples
