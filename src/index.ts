@@ -7,8 +7,6 @@
  *
  * RESILIENCE GUARANTEES:
  * - Never throws exceptions - always returns valid results
- * - Stale-while-revalidate caching - instant response even when cache expires
- * - Jittered cache TTL - prevents thundering herd
  * - Retry with backoff on remote fetch
  * - Always falls back to hardcoded endpoints
  * - Always returns at least the auto-routed endpoint
@@ -36,11 +34,7 @@ let remoteEndpointsUrl: string | null = null;
 /** Cached endpoints from remote fetch */
 let cachedEndpoints: string[] | null = null;
 let cacheExpiry: number = 0;
-let isRefreshing: boolean = false;
-
-/** Cache TTL with jitter to prevent thundering herd (4-6 minutes) */
-const CACHE_TTL_BASE_MS = 5 * 60 * 1000;
-const CACHE_TTL_JITTER_MS = 60 * 1000;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /** Endpoint failure tracking - remember which endpoints failed recently */
 const failedEndpoints = new Map<string, number>(); // url -> failure timestamp
@@ -73,11 +67,6 @@ function markEndpointSucceeded(url: string): void {
   failedEndpoints.delete(url);
 }
 
-/** Get jittered TTL */
-function getJitteredTTL(): number {
-  return CACHE_TTL_BASE_MS + (Math.random() - 0.5) * CACHE_TTL_JITTER_MS;
-}
-
 /**
  * Set the URL to fetch endpoints from (e.g., GCS bucket URL)
  * @param url - The URL to fetch endpoints JSON from, or null to disable remote fetching
@@ -104,6 +93,8 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Fetch endpoints from a remote URL with retry and backoff
+ * NEVER THROWS - returns null on failure
+ *
  * @param url - URL to fetch endpoints JSON from
  * @param timeout - Timeout in ms per attempt (defaults to 3000)
  * @param retries - Number of retry attempts (defaults to 2)
@@ -156,34 +147,14 @@ export async function fetchEndpoints(
 }
 
 /**
- * Background refresh of endpoints cache (non-blocking)
- */
-async function refreshEndpointsInBackground(url: string): Promise<void> {
-  if (isRefreshing) return; // Prevent concurrent refreshes
-  isRefreshing = true;
-
-  try {
-    const remote = await fetchEndpoints(url);
-    if (remote && remote.length > 0) {
-      cachedEndpoints = remote;
-      cacheExpiry = Date.now() + getJitteredTTL();
-    }
-  } catch {
-    // Silently fail - we have stale cache or hardcoded fallback
-  } finally {
-    isRefreshing = false;
-  }
-}
-
-/**
- * Get endpoints with stale-while-revalidate caching
+ * Get endpoints - tries remote first, falls back to cache, then hardcoded
  *
  * NEVER THROWS - always returns valid endpoints
  *
  * Priority:
  * 1. Fresh cache (instant return)
- * 2. Stale cache (instant return, refresh in background)
- * 3. Remote fetch with retry (blocking)
+ * 2. Remote fetch with retry
+ * 3. Stale cache (if remote fails)
  * 4. Hardcoded fallback endpoints
  */
 export async function getEndpoints(): Promise<string[]> {
@@ -200,18 +171,16 @@ export async function getEndpoints(): Promise<string[]> {
       || (typeof process !== 'undefined' ? process.env?.NOZOMI_ENDPOINTS_URL : null)
       || NOZOMI_ENDPOINTS_URL;
 
-    // Stale cache exists - return immediately, refresh in background
-    if (cachedEndpoints && cachedEndpoints.length > 0) {
-      // Fire and forget background refresh
-      refreshEndpointsInBackground(url);
-      return [...cachedEndpoints];
-    }
-
-    // No cache - must fetch (blocking)
+    // Try remote fetch
     const remote = await fetchEndpoints(url);
     if (remote && remote.length > 0) {
       cachedEndpoints = remote;
-      cacheExpiry = now + getJitteredTTL();
+      cacheExpiry = now + CACHE_TTL_MS;
+      return [...cachedEndpoints];
+    }
+
+    // Remote failed - use stale cache if available
+    if (cachedEndpoints && cachedEndpoints.length > 0) {
       return [...cachedEndpoints];
     }
   } catch {
@@ -325,16 +294,14 @@ async function measurePing(url: string, endpoint: string, timeout: number): Prom
 /**
  * Ping a URL multiple times and return the minimum response time
  * NEVER THROWS - returns failed result on any error
- * Tracks failures for cooldown period
  */
 async function pingUrl(
   url: string,
-  options: typeof DEFAULT_OPTIONS,
-  skipCooldownCheck: boolean = false
+  options: typeof DEFAULT_OPTIONS
 ): Promise<EndpointResult> {
   try {
-    // Skip endpoints in cooldown (unless explicitly testing all)
-    if (!skipCooldownCheck && isEndpointInCooldown(url)) {
+    // Skip endpoints in cooldown
+    if (isEndpointInCooldown(url)) {
       return { url, minTime: Infinity, times: [], warmupTimes: [], skipped: true };
     }
 
@@ -364,7 +331,6 @@ async function pingUrl(
 
     return { url, minTime, times, warmupTimes };
   } catch {
-    // If anything unexpected happens, mark endpoint as failed
     markEndpointFailed(url);
     return { url, minTime: Infinity, times: [], warmupTimes: [] };
   }
@@ -414,22 +380,6 @@ function getRegion(url: string): string {
  * @param options.includeAutoRouted - Include auto-routed endpoint as final fallback (defaults to true)
  * @param options.onResult - Callback fired when each endpoint completes testing
  * @returns Fastest endpoints sorted by response time, with auto-routed appended
- *
- * @example
- * // Default: returns [fastest, 2nd fastest, auto-routed]
- * const fastest = await findFastestEndpoints();
- * // Returns: [{ url: 'https://ewr1.nozomi...', minTime: 2.2 }, { url: 'https://ash1.nozomi...', minTime: 5.7 }, { url: 'https://nozomi.temporal.xyz', minTime: 11.8 }]
- *
- * @example
- * // Disable auto-routed fallback
- * const fastest = await findFastestEndpoints({ includeAutoRouted: false, topCount: 3 });
- *
- * @example
- * // Use custom options with progress callback
- * const fastest = await findFastestEndpoints({
- *   topCount: 1,
- *   onResult: (result) => console.log(`${result.url}: ${result.minTime}ms`)
- * });
  */
 export async function findFastestEndpoints(
   options: FindFastestOptions = {}
@@ -543,7 +493,6 @@ export async function findFastestEndpoints(
 export function clearCache(): void {
   cachedEndpoints = null;
   cacheExpiry = 0;
-  isRefreshing = false;
   failedEndpoints.clear();
 }
 
@@ -585,7 +534,6 @@ export interface SendOptions {
  * This is the most resilient way to submit critical transactions:
  * - Sends to all endpoints simultaneously
  * - Returns as soon as ANY endpoint succeeds
- * - Cancels remaining requests after success
  * - Tracks failures for future cooldown
  *
  * @param sendFn - Function that sends to a single endpoint URL, returns result or throws
@@ -593,7 +541,6 @@ export interface SendOptions {
  * @returns First successful result, or null if all failed
  *
  * @example
- * // Send transaction to fastest endpoints in parallel
  * const result = await sendToFastest(async (endpointUrl) => {
  *   const connection = new Connection(`${endpointUrl}/?c=${API_KEY}`);
  *   return await connection.sendRawTransaction(txBytes, { skipPreflight: true });
@@ -624,9 +571,6 @@ export async function sendToFastest<T>(
     }
 
     const timeout = options.timeout || 10000;
-
-    // Create abort controller for cancellation
-    const abortController = new AbortController();
     let hasSucceeded = false;
 
     // Race all endpoints
@@ -641,13 +585,7 @@ export async function sendToFastest<T>(
 
         // Create timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
-          const id = setTimeout(() => {
-            reject(new Error('Timeout'));
-          }, timeout);
-          abortController.signal.addEventListener('abort', () => {
-            clearTimeout(id);
-            reject(new Error('Aborted'));
-          });
+          setTimeout(() => reject(new Error('Timeout')), timeout);
         });
 
         // Race send against timeout
@@ -658,7 +596,6 @@ export async function sendToFastest<T>(
 
         // Success!
         hasSucceeded = true;
-        abortController.abort(); // Cancel other requests
         markEndpointSucceeded(endpoint);
 
         return {
@@ -667,7 +604,6 @@ export async function sendToFastest<T>(
           duration: performance.now() - start
         };
       } catch (error) {
-        // Don't log if we were aborted due to another success
         if (!hasSucceeded) {
           markEndpointFailed(endpoint);
           try {
@@ -680,11 +616,9 @@ export async function sendToFastest<T>(
       }
     });
 
-    // Wait for first success (or all to fail)
+    // Wait for all to complete, return first success
     const results = await Promise.all(promises);
-    const successResult = results.find(r => r !== null);
-
-    return successResult || null;
+    return results.find(r => r !== null) || null;
   } catch {
     return null;
   }
