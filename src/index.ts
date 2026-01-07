@@ -23,38 +23,39 @@ export const NOZOMI_ENDPOINTS_URL = 'https://raw.githubusercontent.com/temporalx
 /** Auto-routed endpoint (always included as fallback by default) */
 export const NOZOMI_AUTO_ENDPOINT = 'https://nozomi.temporal.xyz';
 
-/** Hardcoded fallback endpoints */
-export const NOZOMI_ENDPOINTS = [
-  NOZOMI_AUTO_ENDPOINT,
-  'https://pit1.nozomi.temporal.xyz',
-  'https://tyo1.nozomi.temporal.xyz',
-  'https://sgp1.nozomi.temporal.xyz',
-  'https://ewr1.nozomi.temporal.xyz',
-  'https://ams1.nozomi.temporal.xyz',
-  'https://fra2.nozomi.temporal.xyz',
-  'https://ash1.nozomi.temporal.xyz',
-  'https://lax1.nozomi.temporal.xyz',
-  'https://lon1.nozomi.temporal.xyz',
-  'https://pit.nozomi.temporal.xyz',
-  'https://tyo.nozomi.temporal.xyz',
-  'https://sgp.nozomi.temporal.xyz',
-  'https://ewr.nozomi.temporal.xyz',
-  'https://ams.nozomi.temporal.xyz',
-  'https://fra.nozomi.temporal.xyz',
-  'https://ash.nozomi.temporal.xyz',
-  'https://lax.nozomi.temporal.xyz',
-  'https://lon.nozomi.temporal.xyz'
-] as const;
+/** Hardcoded fallback endpoints with regions */
+export const NOZOMI_ENDPOINTS: EndpointConfig[] = [
+  { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', type: 'auto' },
+  { url: 'https://pit1.nozomi.temporal.xyz', region: 'pittsburgh', type: 'direct' },
+  { url: 'https://tyo1.nozomi.temporal.xyz', region: 'tokyo', type: 'direct' },
+  { url: 'https://sgp1.nozomi.temporal.xyz', region: 'singapore', type: 'direct' },
+  { url: 'https://ewr1.nozomi.temporal.xyz', region: 'newark', type: 'direct' },
+  { url: 'https://ams1.nozomi.temporal.xyz', region: 'amsterdam', type: 'direct' },
+  { url: 'https://fra2.nozomi.temporal.xyz', region: 'frankfurt', type: 'direct' },
+  { url: 'https://ash1.nozomi.temporal.xyz', region: 'ashburn', type: 'direct' },
+  { url: 'https://lax1.nozomi.temporal.xyz', region: 'los-angeles', type: 'direct' },
+  { url: 'https://lon1.nozomi.temporal.xyz', region: 'london', type: 'direct' },
+  { url: 'https://pit.nozomi.temporal.xyz', region: 'pittsburgh', type: 'cloudflare' },
+  { url: 'https://tyo.nozomi.temporal.xyz', region: 'tokyo', type: 'cloudflare' },
+  { url: 'https://sgp.nozomi.temporal.xyz', region: 'singapore', type: 'cloudflare' },
+  { url: 'https://ewr.nozomi.temporal.xyz', region: 'newark', type: 'cloudflare' },
+  { url: 'https://ams.nozomi.temporal.xyz', region: 'amsterdam', type: 'cloudflare' },
+  { url: 'https://fra.nozomi.temporal.xyz', region: 'frankfurt', type: 'cloudflare' },
+  { url: 'https://ash.nozomi.temporal.xyz', region: 'ashburn', type: 'cloudflare' },
+  { url: 'https://lax.nozomi.temporal.xyz', region: 'los-angeles', type: 'cloudflare' },
+  { url: 'https://lon.nozomi.temporal.xyz', region: 'london', type: 'cloudflare' }
+];
 
 export interface EndpointResult {
   url: string;
+  region: string;
   minTime: number;
   times?: number[];
   warmupTimes?: number[];
 }
 
 export interface FindFastestOptions {
-  urls?: string[];
+  endpoints?: EndpointConfig[];
   endpointsUrl?: string;
   pingCount?: number;
   topCount?: number;
@@ -71,7 +72,7 @@ export interface FindFastestOptions {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function fetchEndpointsFromUrl(url: string, timeout: number, retries: number): Promise<string[] | null> {
+async function fetchEndpointsFromUrl(url: string, timeout: number, retries: number): Promise<EndpointConfig[] | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(attempt * 500);
 
@@ -86,10 +87,10 @@ async function fetchEndpointsFromUrl(url: string, timeout: number, retries: numb
 
       const manifest: EndpointsManifest = await response.json();
       if (manifest?.endpoints && Array.isArray(manifest.endpoints)) {
-        const urls = manifest.endpoints
-          .map(e => e?.url)
-          .filter((u): u is string => typeof u === 'string' && u.startsWith('https://'));
-        if (urls.length > 0) return urls;
+        const valid = manifest.endpoints.filter(
+          e => e?.url && typeof e.url === 'string' && e.url.startsWith('https://') && e.region
+        );
+        if (valid.length > 0) return valid;
       }
     } catch {
       clearTimeout(timeoutId);
@@ -98,7 +99,7 @@ async function fetchEndpointsFromUrl(url: string, timeout: number, retries: numb
   return null;
 }
 
-async function getEndpointUrls(endpointsUrl?: string): Promise<string[]> {
+async function getEndpointConfigs(endpointsUrl?: string): Promise<EndpointConfig[]> {
   const url = endpointsUrl || NOZOMI_ENDPOINTS_URL;
   const remote = await fetchEndpointsFromUrl(url, 3000, 2);
   return remote && remote.length > 0 ? remote : [...NOZOMI_ENDPOINTS];
@@ -120,26 +121,25 @@ async function measurePing(url: string, endpoint: string, timeout: number): Prom
   }
 }
 
-async function pingEndpoint(url: string, pingCount: number, warmupCount: number, endpoint: string, timeout: number): Promise<EndpointResult> {
+async function pingEndpoint(
+  config: EndpointConfig,
+  pingCount: number,
+  warmupCount: number,
+  endpoint: string,
+  timeout: number
+): Promise<EndpointResult> {
   const warmupTimes: number[] = [];
   for (let i = 0; i < warmupCount; i++) {
-    warmupTimes.push(await measurePing(url, endpoint, timeout));
+    warmupTimes.push(await measurePing(config.url, endpoint, timeout));
   }
 
   const times: number[] = [];
   for (let i = 0; i < pingCount; i++) {
-    times.push(await measurePing(url, endpoint, timeout));
+    times.push(await measurePing(config.url, endpoint, timeout));
   }
 
   const minTime = times.length > 0 ? Math.min(...times) : Infinity;
-  return { url, minTime, times, warmupTimes };
-}
-
-function getRegion(url: string): string {
-  const match = url.match(/https:\/\/([a-z]+)\d*\.nozomi/);
-  if (match) return match[1];
-  if (url === NOZOMI_AUTO_ENDPOINT) return 'auto';
-  return url;
+  return { url: config.url, region: config.region, minTime, times, warmupTimes };
 }
 
 // ============================================================================
@@ -155,11 +155,9 @@ function getRegion(url: string): string {
  */
 export async function findFastestEndpoints(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
   try {
-    // Get URLs
-    let urls = options.urls || await getEndpointUrls(options.endpointsUrl);
-    if (!Array.isArray(urls) || urls.length === 0) urls = [...NOZOMI_ENDPOINTS];
-    urls = urls.filter(u => typeof u === 'string' && u.startsWith('https://'));
-    if (urls.length === 0) urls = [...NOZOMI_ENDPOINTS];
+    // Get endpoint configs
+    let configs = options.endpoints || await getEndpointConfigs(options.endpointsUrl);
+    if (!Array.isArray(configs) || configs.length === 0) configs = [...NOZOMI_ENDPOINTS];
 
     // Config with defaults
     const pingCount = Math.max(1, Math.min(20, options.pingCount ?? 5));
@@ -171,8 +169,8 @@ export async function findFastestEndpoints(options: FindFastestOptions = {}): Pr
 
     // Ping all endpoints in parallel
     const results = await Promise.all(
-      urls.map(async url => {
-        const result = await pingEndpoint(url, pingCount, warmupCount, endpoint, timeout);
+      configs.map(async config => {
+        const result = await pingEndpoint(config, pingCount, warmupCount, endpoint, timeout);
         try { options.onResult?.(result); } catch { /* ignore callback errors */ }
         return result;
       })
@@ -187,30 +185,28 @@ export async function findFastestEndpoints(options: FindFastestOptions = {}): Pr
     let topResults: EndpointResult[];
 
     if (includeAutoRouted) {
-      const nonAutoResults = validResults.filter(r => r.url !== NOZOMI_AUTO_ENDPOINT);
+      const nonAutoResults = validResults.filter(r => r.region !== 'auto');
       const seenRegions = new Set<string>();
       const deduped: EndpointResult[] = [];
 
       for (const result of nonAutoResults) {
-        const region = getRegion(result.url);
-        if (!seenRegions.has(region)) {
-          seenRegions.add(region);
+        if (!seenRegions.has(result.region)) {
+          seenRegions.add(result.region);
           deduped.push(result);
         }
       }
 
       topResults = deduped.slice(0, topCount);
 
-      const autoResult = validResults.find(r => r.url === NOZOMI_AUTO_ENDPOINT);
-      topResults.push(autoResult ?? { url: NOZOMI_AUTO_ENDPOINT, minTime: Infinity, times: [], warmupTimes: [] });
+      const autoResult = validResults.find(r => r.region === 'auto');
+      topResults.push(autoResult ?? { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: Infinity, times: [], warmupTimes: [] });
     } else {
       const seenRegions = new Set<string>();
       const deduped: EndpointResult[] = [];
 
       for (const result of validResults) {
-        const region = getRegion(result.url);
-        if (!seenRegions.has(region)) {
-          seenRegions.add(region);
+        if (!seenRegions.has(result.region)) {
+          seenRegions.add(result.region);
           deduped.push(result);
         }
       }
@@ -220,11 +216,11 @@ export async function findFastestEndpoints(options: FindFastestOptions = {}): Pr
 
     // Always return at least one endpoint
     if (topResults.length === 0) {
-      topResults = [{ url: NOZOMI_AUTO_ENDPOINT, minTime: Infinity, times: [], warmupTimes: [] }];
+      topResults = [{ url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: Infinity, times: [], warmupTimes: [] }];
     }
 
     return topResults;
   } catch {
-    return [{ url: NOZOMI_AUTO_ENDPOINT, minTime: Infinity, times: [], warmupTimes: [] }];
+    return [{ url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: Infinity, times: [], warmupTimes: [] }];
   }
 }
