@@ -9,8 +9,8 @@
  *   NOZOMI_API_KEY      - Your Nozomi API key
  *   SOLANA_PRIVATE_KEY  - JSON array of your wallet's secret key bytes
  */
-// import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from 'nozomi-sdk';
-import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '../src/index';
+import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from 'nozomi-sdk';
+// For local development: import { findFastestEndpoints, NOZOMI_ENDPOINTS, EndpointResult } from '../src/index';
 
 // Debug logging utility
 const DEBUG = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
