@@ -10,6 +10,7 @@
  * - Retry with backoff on remote fetch
  * - Always falls back to hardcoded endpoints
  * - Always returns at least the auto-routed endpoint
+ * - No global mutable state - safe for concurrent calls
  */
 
 /** Remote endpoints JSON structure */
@@ -28,61 +29,36 @@ export interface EndpointsManifest {
 /** Default GitHub raw URL for remote endpoints */
 export const NOZOMI_ENDPOINTS_URL = 'https://raw.githubusercontent.com/temporalxyz/nozomi-sdk/main/endpoints.json';
 
-/** Custom URL for remote endpoints (set via setEndpointsUrl or NOZOMI_ENDPOINTS_URL env var) */
-let remoteEndpointsUrl: string | null = null;
+/** Auto-routed endpoint (always included as fallback by default) */
+export const NOZOMI_AUTO_ENDPOINT = 'https://nozomi.temporal.xyz';
 
-/** Cached endpoints from remote fetch */
-let cachedEndpoints: string[] | null = null;
-let cacheExpiry: number = 0;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+/** Hardcoded fallback endpoints */
+export const NOZOMI_ENDPOINTS = [
+  // Auto-routed
+  NOZOMI_AUTO_ENDPOINT,
 
-/** Endpoint failure tracking - remember which endpoints failed recently */
-const failedEndpoints = new Map<string, number>(); // url -> failure timestamp
-const FAILURE_COOLDOWN_MS = 60 * 1000; // Skip failed endpoints for 1 minute
+  // Direct endpoints
+  'https://pit1.nozomi.temporal.xyz',  // Pittsburgh
+  'https://tyo1.nozomi.temporal.xyz',  // Tokyo
+  'https://sgp1.nozomi.temporal.xyz',  // Singapore
+  'https://ewr1.nozomi.temporal.xyz',  // Newark
+  'https://ams1.nozomi.temporal.xyz',  // Amsterdam
+  'https://fra2.nozomi.temporal.xyz',  // Frankfurt
+  'https://ash1.nozomi.temporal.xyz',  // Ashburn
+  'https://lax1.nozomi.temporal.xyz',  // Los Angeles
+  'https://lon1.nozomi.temporal.xyz',  // London
 
-/**
- * Check if an endpoint is in cooldown (failed recently)
- */
-function isEndpointInCooldown(url: string): boolean {
-  const failedAt = failedEndpoints.get(url);
-  if (!failedAt) return false;
-  if (Date.now() - failedAt > FAILURE_COOLDOWN_MS) {
-    failedEndpoints.delete(url); // Cooldown expired
-    return false;
-  }
-  return true;
-}
-
-/**
- * Mark an endpoint as failed
- */
-function markEndpointFailed(url: string): void {
-  failedEndpoints.set(url, Date.now());
-}
-
-/**
- * Clear failure status for an endpoint (it succeeded)
- */
-function markEndpointSucceeded(url: string): void {
-  failedEndpoints.delete(url);
-}
-
-/**
- * Set the URL to fetch endpoints from (e.g., GCS bucket URL)
- * @param url - The URL to fetch endpoints JSON from, or null to disable remote fetching
- */
-export function setEndpointsUrl(url: string | null): void {
-  remoteEndpointsUrl = url;
-  cachedEndpoints = null; // Clear cache when URL changes
-  cacheExpiry = 0;
-}
-
-/**
- * Get the current remote endpoints URL
- */
-export function getEndpointsUrl(): string | null {
-  return remoteEndpointsUrl;
-}
+  // Cloudflare-routed endpoints
+  'https://pit.nozomi.temporal.xyz',   // Pittsburgh (CF)
+  'https://tyo.nozomi.temporal.xyz',   // Tokyo (CF)
+  'https://sgp.nozomi.temporal.xyz',   // Singapore (CF)
+  'https://ewr.nozomi.temporal.xyz',   // Newark (CF)
+  'https://ams.nozomi.temporal.xyz',   // Amsterdam (CF)
+  'https://fra.nozomi.temporal.xyz',   // Frankfurt (CF)
+  'https://ash.nozomi.temporal.xyz',   // Ashburn (CF)
+  'https://lax.nozomi.temporal.xyz',   // Los Angeles (CF)
+  'https://lon.nozomi.temporal.xyz'    // London (CF)
+] as const;
 
 /**
  * Sleep for a given number of milliseconds
@@ -147,80 +123,29 @@ export async function fetchEndpoints(
 }
 
 /**
- * Get endpoints - tries remote first, falls back to cache, then hardcoded
+ * Get endpoints - tries remote, falls back to hardcoded
  *
  * NEVER THROWS - always returns valid endpoints
+ * No caching - fresh fetch every time
  *
- * Priority:
- * 1. Fresh cache (instant return)
- * 2. Remote fetch with retry
- * 3. Stale cache (if remote fails)
- * 4. Hardcoded fallback endpoints
+ * @param endpointsUrl - URL to fetch endpoints from (defaults to GitHub raw URL)
  */
-export async function getEndpoints(): Promise<string[]> {
+export async function getEndpoints(endpointsUrl?: string): Promise<string[]> {
   try {
-    const now = Date.now();
-
-    // Fresh cache - return immediately
-    if (cachedEndpoints && cachedEndpoints.length > 0 && now < cacheExpiry) {
-      return [...cachedEndpoints];
-    }
-
-    // Get the URL to fetch from
-    const url = remoteEndpointsUrl
-      || (typeof process !== 'undefined' ? process.env?.NOZOMI_ENDPOINTS_URL : null)
-      || NOZOMI_ENDPOINTS_URL;
+    const url = endpointsUrl || NOZOMI_ENDPOINTS_URL;
 
     // Try remote fetch
     const remote = await fetchEndpoints(url);
     if (remote && remote.length > 0) {
-      cachedEndpoints = remote;
-      cacheExpiry = now + CACHE_TTL_MS;
-      return [...cachedEndpoints];
-    }
-
-    // Remote failed - use stale cache if available
-    if (cachedEndpoints && cachedEndpoints.length > 0) {
-      return [...cachedEndpoints];
+      return remote;
     }
   } catch {
     // Fall through to hardcoded
   }
 
-  // Ultimate fallback - hardcoded endpoints
+  // Fallback to hardcoded endpoints
   return [...NOZOMI_ENDPOINTS];
 }
-
-/** Auto-routed endpoint (always included as fallback by default) */
-export const NOZOMI_AUTO_ENDPOINT = 'https://nozomi.temporal.xyz';
-
-/** Hardcoded fallback endpoints */
-export const NOZOMI_ENDPOINTS = [
-  // Auto-routed
-  NOZOMI_AUTO_ENDPOINT,
-
-  // Direct endpoints
-  'https://pit1.nozomi.temporal.xyz',  // Pittsburgh
-  'https://tyo1.nozomi.temporal.xyz',  // Tokyo
-  'https://sgp1.nozomi.temporal.xyz',  // Singapore
-  'https://ewr1.nozomi.temporal.xyz',  // Newark
-  'https://ams1.nozomi.temporal.xyz',  // Amsterdam
-  'https://fra2.nozomi.temporal.xyz',  // Frankfurt
-  'https://ash1.nozomi.temporal.xyz',  // Ashburn
-  'https://lax1.nozomi.temporal.xyz',  // Los Angeles
-  'https://lon1.nozomi.temporal.xyz',  // London
-
-  // Cloudflare-routed endpoints
-  'https://pit.nozomi.temporal.xyz',   // Pittsburgh (CF)
-  'https://tyo.nozomi.temporal.xyz',   // Tokyo (CF)
-  'https://sgp.nozomi.temporal.xyz',   // Singapore (CF)
-  'https://ewr.nozomi.temporal.xyz',   // Newark (CF)
-  'https://ams.nozomi.temporal.xyz',   // Amsterdam (CF)
-  'https://fra.nozomi.temporal.xyz',   // Frankfurt (CF)
-  'https://ash.nozomi.temporal.xyz',   // Ashburn (CF)
-  'https://lax.nozomi.temporal.xyz',   // Los Angeles (CF)
-  'https://lon.nozomi.temporal.xyz'    // London (CF)
-] as const;
 
 export interface EndpointResult {
   url: string;
@@ -229,15 +154,20 @@ export interface EndpointResult {
   times?: number[];
   /** Warmup request times (for debugging connection setup) */
   warmupTimes?: number[];
-  /** True if endpoint was skipped due to recent failure cooldown */
-  skipped?: boolean;
 }
 
 export interface FindFastestOptions {
+  /** Custom endpoint URLs to test (defaults to fetching from remote/hardcoded) */
   urls?: string[];
+  /** URL to fetch endpoints from if urls not provided */
+  endpointsUrl?: string;
+  /** Number of pings per endpoint (defaults to 5) */
   pingCount?: number;
+  /** Number of fastest endpoints to return (defaults to 2, plus auto-routed) */
   topCount?: number;
+  /** Timeout per ping request in ms (defaults to 5000) */
   timeout?: number;
+  /** Ping endpoint path (defaults to '/ping') */
   endpoint?: string;
   /** Number of warmup requests before measuring (defaults to 2) */
   warmupCount?: number;
@@ -300,11 +230,6 @@ async function pingUrl(
   options: typeof DEFAULT_OPTIONS
 ): Promise<EndpointResult> {
   try {
-    // Skip endpoints in cooldown
-    if (isEndpointInCooldown(url)) {
-      return { url, minTime: Infinity, times: [], warmupTimes: [], skipped: true };
-    }
-
     // Warmup requests to establish connection (TLS handshake, TCP, DNS)
     const warmupTimes: number[] = [];
     for (let i = 0; i < options.warmupCount; i++) {
@@ -322,16 +247,8 @@ async function pingUrl(
     // Handle edge case of empty times array
     const minTime = times.length > 0 ? Math.min(...times) : Infinity;
 
-    // Track success/failure for future cooldown
-    if (minTime === Infinity || times.every(t => t === Infinity)) {
-      markEndpointFailed(url);
-    } else {
-      markEndpointSucceeded(url);
-    }
-
     return { url, minTime, times, warmupTimes };
   } catch {
-    markEndpointFailed(url);
     return { url, minTime: Infinity, times: [], warmupTimes: [] };
   }
 }
@@ -366,17 +283,19 @@ function getRegion(url: string): string {
  * Find the fastest Nozomi endpoints.
  *
  * NEVER THROWS - always returns at least the auto-routed endpoint.
+ * No global state - safe for concurrent calls.
  *
  * By default returns [2 fastest regional endpoints, auto-routed endpoint].
  * The auto-routed endpoint is always included as a fallback unless disabled.
  *
  * @param options - Configuration options
- * @param options.urls - Custom endpoint URLs (defaults to all Nozomi regions)
- * @param options.pingCount - Number of pings per endpoint (defaults to 5, uses minimum to handle jitter)
+ * @param options.urls - Custom endpoint URLs (defaults to fetching from remote/hardcoded)
+ * @param options.endpointsUrl - URL to fetch endpoints from if urls not provided
+ * @param options.pingCount - Number of pings per endpoint (defaults to 5)
  * @param options.topCount - Number of fastest endpoints to return (defaults to 2, plus auto-routed)
  * @param options.timeout - Timeout per ping request in ms (defaults to 5000)
  * @param options.endpoint - Ping endpoint path (defaults to '/ping')
- * @param options.warmupCount - Number of warmup requests before measuring (defaults to 2, for TLS/TCP setup)
+ * @param options.warmupCount - Number of warmup requests before measuring (defaults to 2)
  * @param options.includeAutoRouted - Include auto-routed endpoint as final fallback (defaults to true)
  * @param options.onResult - Callback fired when each endpoint completes testing
  * @returns Fastest endpoints sorted by response time, with auto-routed appended
@@ -388,7 +307,7 @@ export async function findFastestEndpoints(
     // Get URLs - never throws, always returns valid array
     let urls: string[];
     try {
-      urls = options.urls || await getEndpoints();
+      urls = options.urls || await getEndpoints(options.endpointsUrl);
     } catch {
       urls = [...NOZOMI_ENDPOINTS];
     }
@@ -486,24 +405,6 @@ export async function findFastestEndpoints(
   }
 }
 
-/**
- * Clear all cached state (endpoints cache and failure tracking)
- * Useful for testing or when you want to force a fresh start
- */
-export function clearCache(): void {
-  cachedEndpoints = null;
-  cacheExpiry = 0;
-  failedEndpoints.clear();
-}
-
-/**
- * Get the current failure cooldown status for all endpoints
- * Useful for debugging
- */
-export function getFailedEndpoints(): Map<string, number> {
-  return new Map(failedEndpoints);
-}
-
 // ============================================================================
 // PARALLEL REDUNDANT SUBMISSION
 // ============================================================================
@@ -520,6 +421,8 @@ export interface SendResult<T> {
 export interface SendOptions {
   /** Endpoints to try (defaults to result of findFastestEndpoints) */
   endpoints?: string[] | EndpointResult[];
+  /** URL to fetch endpoints from if endpoints not provided */
+  endpointsUrl?: string;
   /** Timeout per endpoint in ms (defaults to 10000) */
   timeout?: number;
   /** Called when an endpoint fails (for logging) */
@@ -530,11 +433,11 @@ export interface SendOptions {
  * Send to multiple endpoints in parallel, return first success
  *
  * NEVER THROWS - returns null if all endpoints fail
+ * No global state - safe for concurrent calls.
  *
  * This is the most resilient way to submit critical transactions:
  * - Sends to all endpoints simultaneously
  * - Returns as soon as ANY endpoint succeeds
- * - Tracks failures for future cooldown
  *
  * @param sendFn - Function that sends to a single endpoint URL, returns result or throws
  * @param options - Configuration options
@@ -562,7 +465,7 @@ export async function sendToFastest<T>(
         typeof e === 'string' ? e : e.url
       );
     } else {
-      const fastest = await findFastestEndpoints();
+      const fastest = await findFastestEndpoints({ endpointsUrl: options.endpointsUrl });
       endpointUrls = fastest.map(e => e.url);
     }
 
@@ -578,11 +481,6 @@ export async function sendToFastest<T>(
       const start = performance.now();
 
       try {
-        // Skip endpoints in cooldown
-        if (isEndpointInCooldown(endpoint)) {
-          return null;
-        }
-
         // Create timeout promise
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('Timeout')), timeout);
@@ -596,7 +494,6 @@ export async function sendToFastest<T>(
 
         // Success!
         hasSucceeded = true;
-        markEndpointSucceeded(endpoint);
 
         return {
           endpoint,
@@ -605,7 +502,6 @@ export async function sendToFastest<T>(
         };
       } catch (error) {
         if (!hasSucceeded) {
-          markEndpointFailed(endpoint);
           try {
             options.onError?.(endpoint, error);
           } catch {
@@ -628,6 +524,7 @@ export async function sendToFastest<T>(
  * Send to endpoints sequentially with fallback
  *
  * NEVER THROWS - returns null if all endpoints fail
+ * No global state - safe for concurrent calls.
  *
  * Tries each endpoint in order, moving to next on failure.
  * More efficient than parallel when you expect first endpoint to usually work.
@@ -654,7 +551,7 @@ export async function sendWithFallback<T>(
         typeof e === 'string' ? e : e.url
       );
     } else {
-      const fastest = await findFastestEndpoints();
+      const fastest = await findFastestEndpoints({ endpointsUrl: options.endpointsUrl });
       endpointUrls = fastest.map(e => e.url);
     }
 
@@ -666,11 +563,6 @@ export async function sendWithFallback<T>(
 
     // Try each endpoint in order
     for (const endpoint of endpointUrls) {
-      // Skip endpoints in cooldown
-      if (isEndpointInCooldown(endpoint)) {
-        continue;
-      }
-
       const start = performance.now();
 
       try {
@@ -683,14 +575,12 @@ export async function sendWithFallback<T>(
         ]);
 
         // Success!
-        markEndpointSucceeded(endpoint);
         return {
           endpoint,
           result,
           duration: performance.now() - start
         };
       } catch (error) {
-        markEndpointFailed(endpoint);
         try {
           options.onError?.(endpoint, error);
         } catch {
