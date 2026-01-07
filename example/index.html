@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nozomi SDK Example</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #0a0a0a;
+      color: #e0e0e0;
+    }
+    h1 { color: #fff; }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #444; cursor: not-allowed; }
+    #results {
+      margin-top: 24px;
+      padding: 16px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+    .endpoint {
+      padding: 8px 0;
+      border-bottom: 1px solid #333;
+    }
+    .endpoint:last-child { border-bottom: none; }
+    .url { color: #60a5fa; }
+    .time { color: #4ade80; }
+    .status { color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Nozomi SDK - Endpoint Discovery</h1>
+  <p>Find the fastest Nozomi endpoints for your location.</p>
+
+  <button id="findBtn">Find Fastest Endpoints</button>
+
+  <div id="results"></div>
+
+  <script type="module">
+    import { findFastestEndpoints, NOZOMI_ENDPOINTS } from '../src/index.ts';
+
+    const btn = document.getElementById('findBtn');
+    const results = document.getElementById('results');
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      results.innerHTML = `<div class="status">Testing ${NOZOMI_ENDPOINTS.length} endpoints...</div>`;
+
+      try {
+        const start = performance.now();
+        const fastest = await findFastestEndpoints({ topCount: 5 });
+        const elapsed = (performance.now() - start).toFixed(0);
+
+        if (fastest.length === 0) {
+          results.innerHTML = '<div class="status">No endpoints responded. Check your network connection.</div>';
+          return;
+        }
+
+        results.innerHTML = `<div class="status">Completed in ${elapsed}ms\n</div>` +
+          fastest.map((ep, i) =>
+            `<div class="endpoint">${i + 1}. <span class="url">${ep.url}</span>\n   <span class="time">${ep.minTime.toFixed(2)}ms</span></div>`
+          ).join('');
+
+      } catch (err) {
+        results.innerHTML = `<div class="status">Error: ${err.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
