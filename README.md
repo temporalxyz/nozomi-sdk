@@ -47,6 +47,39 @@ const rpcUrl = client.getEndpointUrl(endpoints[0]);
 const fastestUrl = await client.getFastestEndpointUrl();
 ```
 
+### Send Transaction (Fast API v2)
+
+```typescript
+import { NozomiClient } from '@temporalxyz/nozomi-sdk';
+import { VersionedTransaction } from '@solana/web3.js';
+
+const client = new NozomiClient('YOUR_API_KEY');
+
+// Build and sign your transaction...
+const signedTx: VersionedTransaction = /* your signed transaction */;
+
+// Send to all fastest endpoints in parallel
+const signature = await client.sendTransactionV2(signedTx);
+
+console.log(`Signature: ${signature}`);
+```
+
+### Keep Connections Warm
+
+Keep-warm runs automatically in the background after the first `getEndpoints()` call.
+
+```typescript
+const client = new NozomiClient('YOUR_API_KEY', {
+  keepWarmInterval: 30000,  // Ping every 30s (default), set to 0 to disable
+});
+
+// Starts keep-warm automatically
+await client.getEndpoints();
+
+// Clean up when done (stops keep-warm)
+client.destroy();
+```
+
 ### Find Single Fastest
 
 ```typescript
@@ -142,6 +175,11 @@ const client = new NozomiClient(clientId: string, options?: NozomiClientOptions)
 | `getEndpoints(options?)` | `Promise<EndpointResult[]>` | Get cached endpoints |
 | `refresh(options?)` | `Promise<EndpointResult[]>` | Refresh cached endpoints |
 | `clearCache()` | `void` | Clear endpoint cache |
+| `sendTransactionV2(tx, options?)` | `Promise<string>` | Send signed transaction, returns signature |
+| `startKeepWarm()` | `void` | Start periodic connection warming |
+| `stopKeepWarm()` | `void` | Stop connection warming |
+| `warmConnections()` | `Promise<void>` | Manually warm all connections |
+| `destroy()` | `void` | Clean up resources |
 
 ### `findFastestEndpoints(options?)`
 
@@ -179,11 +217,17 @@ interface EndpointResult {
 
 ```typescript
 import {
-  NozomiClient,          // Client class (recommended)
-  findFastestEndpoints,  // Standalone function
-  NOZOMI_ENDPOINTS,      // Hardcoded fallback endpoints
-  NOZOMI_AUTO_ENDPOINT,  // Auto-routed endpoint URL
-  NOZOMI_ENDPOINTS_URL   // Default endpoints JSON URL
+  NozomiClient,            // Client class (recommended)
+  findFastestEndpoints,    // Standalone function
+  NOZOMI_ENDPOINTS,        // Hardcoded fallback endpoints
+  NOZOMI_AUTO_ENDPOINT,    // Auto-routed endpoint URL
+  NOZOMI_ENDPOINTS_URL,    // Default endpoints JSON URL
+  // Types
+  NozomiClientOptions,
+  SendTransactionOptions,
+  EndpointResult,
+  EndpointConfig,
+  FindFastestOptions
 } from '@temporalxyz/nozomi-sdk';
 ```
 
@@ -191,6 +235,9 @@ import {
 
 - **Zero dependencies** - works in Node.js and browsers
 - **Never throws** - always returns valid results with fallbacks
+- **Fast API v2** - send transactions via optimized `/api/sendTransaction2` endpoint
+- **Multi-endpoint send** - send to all fastest endpoints in parallel for redundancy
+- **Connection keep-warm** - periodic pings to maintain warm HTTP connections
 - **Sorted by latency** - returns endpoints ordered by response time
 - **Warmup pings** - accounts for TLS/TCP connection setup
 - **Remote config** - fetches latest endpoints from GitHub with fallback

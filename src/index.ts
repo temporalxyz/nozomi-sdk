@@ -72,6 +72,48 @@ export interface FindFastestOptions {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Base58 alphabet used by Solana
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function encodeBase58(bytes: Uint8Array): string {
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let i = 0; i < digits.length; i++) {
+      carry += digits[i] << 8;
+      digits[i] = carry % 58;
+      carry = (carry / 58) | 0;
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = (carry / 58) | 0;
+    }
+  }
+  // Handle leading zeros
+  let result = '';
+  for (const byte of bytes) {
+    if (byte === 0) result += BASE58_ALPHABET[0];
+    else break;
+  }
+  // Convert digits to string (digits are in reverse order)
+  for (let i = digits.length - 1; i >= 0; i--) {
+    result += BASE58_ALPHABET[digits[i]];
+  }
+  return result;
+}
+
+function extractSignature(serializedTx: Uint8Array): string {
+  // Solana transaction format: [signature_count (compact-u16), signatures (64 bytes each), ...]
+  // For compact-u16: if first byte < 0x80, it's the count; otherwise need to decode more bytes
+  const sigCount = serializedTx[0];
+  if (sigCount === 0 || serializedTx.length < 65) {
+    throw new Error('Invalid transaction: no signatures found');
+  }
+  // First signature starts at byte 1 (after the compact-u16 count, which is 1 byte for counts < 128)
+  const signatureBytes = serializedTx.slice(1, 65);
+  return encodeBase58(signatureBytes);
+}
+
 async function fetchEndpointsFromUrl(url: string, timeout: number, retries: number): Promise<EndpointConfig[] | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(attempt * 500);
@@ -163,6 +205,8 @@ export interface NozomiClientOptions {
   endpoints?: EndpointConfig[];
   /** Custom endpoints URL */
   endpointsUrl?: string;
+  /** Keep-warm interval in ms (default: 30000). Set to 0 to disable. */
+  keepWarmInterval?: number;
 }
 
 /**
@@ -175,6 +219,8 @@ export class NozomiClient {
   private readonly clientId: string;
   private readonly defaultOptions: NozomiClientOptions;
   private cachedEndpoints: EndpointResult[] | null = null;
+  private keepWarmTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly keepWarmInterval: number;
 
   /**
    * Create a new NozomiClient.
@@ -185,6 +231,7 @@ export class NozomiClient {
   constructor(clientId: string, options: NozomiClientOptions = {}) {
     this.clientId = clientId;
     this.defaultOptions = options;
+    this.keepWarmInterval = options.keepWarmInterval ?? 30000;
   }
 
   /**
@@ -226,10 +273,14 @@ export class NozomiClient {
    * Get cached endpoints or fetch if not cached.
    *
    * Call refresh() to update the cache.
+   * Automatically starts keep-warm in the background on first call.
    */
   async getEndpoints(options: FindFastestOptions = {}): Promise<EndpointResult[]> {
     if (!this.cachedEndpoints) {
       this.cachedEndpoints = await this.findFastestEndpoints(options);
+      if (!this.keepWarmTimer && this.keepWarmInterval > 0) {
+        this.startKeepWarm();
+      }
     }
     return this.cachedEndpoints;
   }
@@ -248,6 +299,168 @@ export class NozomiClient {
   clearCache(): void {
     this.cachedEndpoints = null;
   }
+
+  /**
+   * Start the keep-warm interval.
+   * Sends periodic ping requests to all cached endpoints to maintain warm connections.
+   * Uses HTTP keep-alive for connection reuse.
+   */
+  startKeepWarm(): void {
+    if (this.keepWarmTimer || this.keepWarmInterval <= 0) return;
+
+    this.keepWarmTimer = setInterval(() => {
+      this.warmConnections();
+    }, this.keepWarmInterval);
+
+    // Unref the timer so it doesn't prevent Node.js from exiting
+    if (typeof this.keepWarmTimer === 'object' && 'unref' in this.keepWarmTimer) {
+      this.keepWarmTimer.unref();
+    }
+  }
+
+  /**
+   * Stop the keep-warm interval.
+   */
+  stopKeepWarm(): void {
+    if (this.keepWarmTimer) {
+      clearInterval(this.keepWarmTimer);
+      this.keepWarmTimer = null;
+    }
+  }
+
+  /**
+   * Check if keep-warm is currently active.
+   */
+  isKeepWarmActive(): boolean {
+    return this.keepWarmTimer !== null;
+  }
+
+  /**
+   * Manually warm all cached endpoint connections.
+   * Sends a ping request to each endpoint with HTTP keep-alive enabled.
+   */
+  async warmConnections(): Promise<void> {
+    if (!this.cachedEndpoints || this.cachedEndpoints.length === 0) return;
+
+    const endpoint = this.defaultOptions.endpoint ?? '/ping';
+    const timeout = this.defaultOptions.timeout ?? 5000;
+
+    await Promise.all(
+      this.cachedEndpoints.map(async (ep) => {
+        const pingUrl = ep.url.replace(/\/+$/, '') + endpoint;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+        try {
+          await fetch(pingUrl, {
+            method: 'GET',
+            signal: controller.signal,
+            cache: 'no-store',
+            keepalive: true,
+          });
+        } catch {
+          // Ignore errors - connection warming is best-effort
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      })
+    );
+  }
+
+  /**
+   * Clean up resources. Call this when done with the client.
+   */
+  destroy(): void {
+    this.stopKeepWarm();
+    this.clearCache();
+  }
+
+  /**
+   * Send a signed transaction to Nozomi using the fast /api/sendTransaction2 endpoint.
+   * Uses base64 encoding and text/plain content type for optimal performance.
+   *
+   * Sends to all cached endpoints in parallel for redundancy.
+   *
+   * @param transaction - Signed transaction (Transaction or VersionedTransaction with serialize() method)
+   * @param options - Send options
+   * @returns Promise with transaction signature (base58)
+   * @throws Error if all endpoints fail
+   */
+  async sendTransactionV2(
+    transaction: { serialize(): Uint8Array },
+    options: SendTransactionOptions = {}
+  ): Promise<string> {
+    // Serialize and encode to base64 immediately
+    const serializedTx = transaction.serialize();
+    const txBase64 = typeof Buffer !== 'undefined'
+      ? Buffer.from(serializedTx).toString('base64')
+      : btoa(String.fromCharCode(...serializedTx));
+
+    const endpoints = this.cachedEndpoints ?? await this.getEndpoints();
+    const timeout = options.timeout ?? this.defaultOptions.timeout ?? 5000;
+    const maxRetries = options.maxRetries ?? 2;
+
+    const sendToEndpoint = async (endpoint: EndpointResult, attempt: number = 0): Promise<{ endpoint: string; success: boolean; error?: string }> => {
+      const url = `${endpoint.url.replace(/\/+$/, '')}/api/sendTransaction2?c=${this.clientId}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: txBase64,
+          signal: controller.signal,
+          keepalive: true,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return { endpoint: endpoint.url, success: true };
+        }
+
+        const errorText = await response.text().catch(() => '');
+        const error = `HTTP ${response.status}: ${errorText}`;
+        if (attempt < maxRetries) {
+          return sendToEndpoint(endpoint, attempt + 1);
+        }
+        return { endpoint: endpoint.url, success: false, error };
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const error = err instanceof Error ? err.message : 'Unknown error';
+        if (attempt < maxRetries) {
+          return sendToEndpoint(endpoint, attempt + 1);
+        }
+        return { endpoint: endpoint.url, success: false, error };
+      }
+    };
+
+    // Send to all endpoints in parallel for maximum speed
+    const results = await Promise.all(endpoints.map(ep => sendToEndpoint(ep)));
+    const successes = results.filter(r => r.success);
+    const failures = results.filter(r => !r.success);
+
+    // Log any failures for debugging
+    for (const failure of failures) {
+      console.warn(`[nozomi-sdk] Failed to send to ${failure.endpoint}: ${failure.error}`);
+    }
+
+    if (successes.length === 0) {
+      const errors = failures.map(f => `${f.endpoint}: ${f.error}`).join('; ');
+      throw new Error(`All endpoints failed: ${errors}`);
+    }
+
+    // Extract signature after successful send (base58 encoding is slower, do it last)
+    return extractSignature(serializedTx);
+  }
+}
+
+export interface SendTransactionOptions {
+  /** Timeout per request in ms (default: 5000) */
+  timeout?: number;
+  /** Max retries per endpoint (default: 2) */
+  maxRetries?: number;
 }
 
 /**
