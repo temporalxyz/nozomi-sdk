@@ -327,5 +327,89 @@ async function nozomiClientWithSolana() {
   await client.refresh();
 }
 
+// Example 10: Send transaction with NozomiClient.sendTransactionV2
+async function sendWithNozomiClient() {
+  debug('Starting sendWithNozomiClient');
+  const {
+    Connection,
+    Keypair,
+    SystemProgram,
+    TransactionMessage,
+    VersionedTransaction,
+    PublicKey
+  } = await import('@solana/web3.js');
+
+  const client = new NozomiClient(process.env.NOZOMI_API_KEY || 'YOUR_API_KEY');
+
+  // Standard RPC for fetching blockhash
+  const rpcUrl = 'https://api.mainnet-beta.solana.com';
+  debug('Creating standard RPC connection to:', rpcUrl);
+  const rpcConnection = new Connection(rpcUrl, 'confirmed');
+
+  // Load your keypair
+  debug('Loading keypair from SOLANA_PRIVATE_KEY env var');
+  const secretKey = Uint8Array.from(JSON.parse(process.env.SOLANA_PRIVATE_KEY || '[]'));
+  const payer = Keypair.fromSecretKey(secretKey);
+  debug('Payer public key:', payer.publicKey.toBase58());
+
+  // Build a simple transfer transaction
+  const recipient = new PublicKey('11111111111111111111111111111111');
+  const lamports = 1000; // Very small amount for testing
+  debug('Building transaction:', { recipient: recipient.toBase58(), lamports });
+
+  // Get recent blockhash
+  debug('Fetching recent blockhash...');
+  const { blockhash } = await rpcConnection.getLatestBlockhash();
+  debug('Blockhash:', blockhash);
+
+  // Build versioned transaction
+  const instructions = [
+    SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: recipient,
+      lamports
+    })
+  ];
+
+  const messageV0 = new TransactionMessage({
+    payerKey: payer.publicKey,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+
+  const transaction = new VersionedTransaction(messageV0);
+  transaction.sign([payer]);
+  debug('Transaction signed');
+
+  // Send via NozomiClient.sendTransactionV2 (sends to all endpoints in parallel)
+  debug('Sending transaction via NozomiClient.sendTransactionV2...');
+  const sendStart = performance.now();
+
+  try {
+    const signature = await client.sendTransactionV2(transaction);
+    debug('Transaction sent in', (performance.now() - sendStart).toFixed(2), 'ms');
+
+    console.log(`Transaction sent! Signature: ${signature}`);
+    console.log(`View on Solscan: https://solscan.io/tx/${signature}`);
+
+    // Optionally confirm
+    debug('Waiting for confirmation...');
+    const confirmation = await rpcConnection.confirmTransaction(signature, 'confirmed');
+
+    if (confirmation.value.err) {
+      debug('Transaction error:', confirmation.value.err);
+      console.error('Transaction failed:', confirmation.value.err);
+    } else {
+      debug('Transaction confirmed successfully');
+      console.log('Transaction confirmed!');
+    }
+  } catch (err) {
+    console.error('Failed to send transaction:', err instanceof Error ? err.message : err);
+  } finally {
+    // Clean up keep-warm
+    client.destroy();
+  }
+}
+
 // Run examples
 basicUsage();

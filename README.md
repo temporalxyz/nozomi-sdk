@@ -10,6 +10,8 @@ npm install @temporalxyz/nozomi-sdk
 
 ## Usage
 
+See [example/README.md](example/README.md) for runnable CLI examples.
+
 ### Basic Usage
 
 ```typescript
