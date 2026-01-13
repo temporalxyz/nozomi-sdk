@@ -72,10 +72,43 @@ export interface FindFastestOptions {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Base58 alphabet used by Solana
+type SolanaTransaction = {
+  serialize(): Uint8Array;
+  signatures?: Uint8Array[];
+  signature?: Uint8Array | null;
+};
+
+async function getTransactionSignature(transaction: SolanaTransaction): Promise<string> {
+  // Try to import bs58 from @solana/web3.js's dependencies
+  try {
+    // @solana/web3.js uses bs58 internally, try to import it
+    const bs58Module = await import('bs58');
+    const bs58 = bs58Module.default || bs58Module;
+
+    // For VersionedTransaction or Transaction with signatures array
+    if (transaction.signatures && transaction.signatures.length > 0) {
+      return bs58.encode(transaction.signatures[0]);
+    }
+
+    // For legacy Transaction with signature property
+    if (transaction.signature) {
+      return bs58.encode(transaction.signature);
+    }
+
+    // Fallback: parse from serialized transaction
+    const serialized = transaction.serialize();
+    const signatureBytes = serialized.slice(1, 65);
+    return bs58.encode(signatureBytes);
+  } catch {
+    // Fallback to manual base58 encoding if bs58 module not available
+    return extractSignatureManually(transaction.serialize());
+  }
+}
+
+// Fallback base58 encoding (only used if @solana/web3.js not available)
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-function encodeBase58(bytes: Uint8Array): string {
+function base58Encode(bytes: Uint8Array): string {
   const digits = [0];
   for (const byte of bytes) {
     let carry = byte;
@@ -89,29 +122,23 @@ function encodeBase58(bytes: Uint8Array): string {
       carry = (carry / 58) | 0;
     }
   }
-  // Handle leading zeros
   let result = '';
   for (const byte of bytes) {
     if (byte === 0) result += BASE58_ALPHABET[0];
     else break;
   }
-  // Convert digits to string (digits are in reverse order)
   for (let i = digits.length - 1; i >= 0; i--) {
     result += BASE58_ALPHABET[digits[i]];
   }
   return result;
 }
 
-function extractSignature(serializedTx: Uint8Array): string {
-  // Solana transaction format: [signature_count (compact-u16), signatures (64 bytes each), ...]
-  // For compact-u16: if first byte < 0x80, it's the count; otherwise need to decode more bytes
-  const sigCount = serializedTx[0];
-  if (sigCount === 0 || serializedTx.length < 65) {
+function extractSignatureManually(serializedTx: Uint8Array): string {
+  if (serializedTx[0] === 0 || serializedTx.length < 65) {
     throw new Error('Invalid transaction: no signatures found');
   }
-  // First signature starts at byte 1 (after the compact-u16 count, which is 1 byte for counts < 128)
   const signatureBytes = serializedTx.slice(1, 65);
-  return encodeBase58(signatureBytes);
+  return base58Encode(signatureBytes);
 }
 
 async function fetchEndpointsFromUrl(url: string, timeout: number, retries: number): Promise<EndpointConfig[] | null> {
@@ -387,7 +414,7 @@ export class NozomiClient {
    * @throws Error if all endpoints fail
    */
   async sendTransactionV2(
-    transaction: { serialize(): Uint8Array },
+    transaction: SolanaTransaction,
     options: SendTransactionOptions = {}
   ): Promise<string> {
     // Serialize and encode to base64 immediately
@@ -451,8 +478,8 @@ export class NozomiClient {
       throw new Error(`All endpoints failed: ${errors}`);
     }
 
-    // Extract signature after successful send (base58 encoding is slower, do it last)
-    return extractSignature(serializedTx);
+    // Extract signature after successful send
+    return getTransactionSignature(transaction);
   }
 }
 
