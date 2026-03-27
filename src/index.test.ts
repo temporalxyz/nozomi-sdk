@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   findFastestEndpoints,
+  NozomiClient,
   NOZOMI_ENDPOINTS,
   NOZOMI_AUTO_ENDPOINT,
+  NOZOMI_EDGE_ENDPOINT,
   NOZOMI_ENDPOINTS_URL,
   EndpointConfig,
   EndpointResult
@@ -1243,6 +1245,316 @@ describe('findFastestEndpoints', () => {
 
       // Should return at most 5 due to topCount
       expect(results.length).toBeLessThanOrEqual(5);
+    });
+  });
+});
+
+describe('NozomiClient', () => {
+  describe('sendTransactionV2', () => {
+    // Fake signed transaction with a known 64-byte signature
+    const fakeSignature = new Uint8Array(64).fill(1);
+    const fakeSerialized = new Uint8Array(1 + 64 + 100); // sigcount + sig + body
+    fakeSerialized[0] = 1; // 1 signature
+    fakeSerialized.set(fakeSignature, 1);
+
+    const fakeTransaction = {
+      serialize: () => fakeSerialized,
+      signatures: [fakeSignature],
+    };
+
+    it('always sends to edge endpoint', async () => {
+      const sentUrls: string[] = [];
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendTransaction2')) {
+          sentUrls.push(url);
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        // Ping requests
+        if (url.includes('/ping')) {
+          return Promise.resolve({ ok: true });
+        }
+        // Remote endpoint fetch
+        return Promise.reject(new Error('Skip remote'));
+      });
+
+      const client = new NozomiClient('test-key', {
+        keepWarmInterval: 0,
+      });
+      // Pre-populate cache with endpoints that do NOT include edge
+      (client as any).cachedEndpoints = [
+        { url: 'https://pit1.nozomi.temporal.xyz', region: 'pittsburgh', minTime: 10 },
+        { url: 'https://nozomi.temporal.xyz', region: 'auto', minTime: 20 },
+      ];
+
+      await client.sendTransactionV2(fakeTransaction);
+
+      expect(sentUrls.some(u => u.includes('edge.nozomi.temporal.xyz'))).toBe(true);
+      client.destroy();
+    });
+
+    it('does not duplicate edge if already cached', async () => {
+      const sentUrls: string[] = [];
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendTransaction2')) {
+          sentUrls.push(url);
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('test-key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+        { url: 'https://pit1.nozomi.temporal.xyz', region: 'pittsburgh', minTime: 10 },
+        { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: 20 },
+      ];
+
+      await client.sendTransactionV2(fakeTransaction);
+
+      const edgeHits = sentUrls.filter(u => u.includes('edge.nozomi.temporal.xyz'));
+      expect(edgeHits.length).toBe(1);
+      expect(sentUrls.length).toBe(3);
+      client.destroy();
+    });
+
+    it('returns a signature string on success', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendTransaction2')) {
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('test-key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      const sig = await client.sendTransactionV2(fakeTransaction);
+
+      expect(typeof sig).toBe('string');
+      expect(sig.length).toBeGreaterThan(0);
+      client.destroy();
+    });
+
+    it('throws when all endpoints fail', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendTransaction2')) {
+          return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve('server error') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('test-key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      await expect(client.sendTransactionV2(fakeTransaction, { maxRetries: 0 }))
+        .rejects.toThrow('All endpoints failed');
+      client.destroy();
+    });
+
+    it('includes client id in send URL', async () => {
+      const sentUrls: string[] = [];
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendTransaction2')) {
+          sentUrls.push(url);
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('my-api-key-123', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      await client.sendTransactionV2(fakeTransaction);
+
+      expect(sentUrls[0]).toContain('c=my-api-key-123');
+      client.destroy();
+    });
+  });
+
+  describe('sendBatch', () => {
+    // Helper to create a fake transaction of a given size
+    function fakeTx(size: number = 200) {
+      const sig = new Uint8Array(64).fill(2);
+      const data = new Uint8Array(size);
+      data[0] = 1; // 1 signature
+      data.set(sig, 1);
+      return {
+        serialize: () => data,
+        signatures: [sig],
+      };
+    }
+
+    it('sends binary payload to /api/sendBatch on all endpoints', async () => {
+      const sentUrls: string[] = [];
+      const sentBodies: ArrayBuffer[] = [];
+
+      mockFetch.mockImplementation(async (url: string, init: any) => {
+        if (url.includes('/api/sendBatch')) {
+          sentUrls.push(url);
+          // Capture body
+          if (init?.body instanceof Uint8Array) {
+            sentBodies.push(init.body.slice());
+          }
+          return { ok: true, text: () => Promise.resolve('') };
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('batch-key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+        { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', minTime: 20 },
+      ];
+
+      const tx1 = fakeTx(200);
+      const tx2 = fakeTx(300);
+      const sigs = await client.sendBatch([tx1, tx2]);
+
+      // Sent to both endpoints
+      expect(sentUrls.length).toBe(2);
+      expect(sentUrls.every(u => u.includes('/api/sendBatch'))).toBe(true);
+      expect(sentUrls.every(u => u.includes('c=batch-key'))).toBe(true);
+
+      // Returns 2 signatures
+      expect(sigs.length).toBe(2);
+      expect(sigs.every(s => typeof s === 'string' && s.length > 0)).toBe(true);
+
+      // Verify binary wire format: [len_hi][len_lo][tx]...
+      const body = new Uint8Array(sentBodies[0] as ArrayBuffer);
+      const expectedLen = 2 + 200 + 2 + 300;
+      expect(body.length).toBe(expectedLen);
+      // First tx length prefix (big-endian 200 = 0x00C8)
+      expect(body[0]).toBe(0);
+      expect(body[1]).toBe(200);
+      // Second tx length prefix (big-endian 300 = 0x012C)
+      expect(body[202]).toBe(1);
+      expect(body[203]).toBe(0x2c);
+
+      client.destroy();
+    });
+
+    it('always includes edge endpoint', async () => {
+      const sentUrls: string[] = [];
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendBatch')) {
+          sentUrls.push(url);
+          return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      // Cache without edge
+      (client as any).cachedEndpoints = [
+        { url: 'https://pit1.nozomi.temporal.xyz', region: 'pittsburgh', minTime: 10 },
+      ];
+
+      await client.sendBatch([fakeTx()]);
+
+      expect(sentUrls.some(u => u.includes('edge.nozomi.temporal.xyz'))).toBe(true);
+      client.destroy();
+    });
+
+    it('rejects empty transaction array', async () => {
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      await expect(client.sendBatch([])).rejects.toThrow('at least one');
+      client.destroy();
+    });
+
+    it('rejects more than 16 transactions', async () => {
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      const txs = Array.from({ length: 17 }, () => fakeTx());
+      await expect(client.sendBatch(txs)).rejects.toThrow('at most 16');
+      client.destroy();
+    });
+
+    it('rejects transaction smaller than 66 bytes', async () => {
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      const tinyTx = { serialize: () => new Uint8Array(50), signatures: [new Uint8Array(64)] };
+      await expect(client.sendBatch([tinyTx])).rejects.toThrow('out of range');
+      client.destroy();
+    });
+
+    it('rejects transaction larger than 1232 bytes', async () => {
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      const bigTx = { serialize: () => new Uint8Array(1300), signatures: [new Uint8Array(64)] };
+      await expect(client.sendBatch([bigTx])).rejects.toThrow('out of range');
+      client.destroy();
+    });
+
+    it('throws when all endpoints fail', async () => {
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('/api/sendBatch')) {
+          return Promise.resolve({ ok: false, status: 400, text: () => Promise.resolve('framing error') });
+        }
+        return Promise.reject(new Error('Skip'));
+      });
+
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      await expect(client.sendBatch([fakeTx()], { maxRetries: 0 }))
+        .rejects.toThrow('All endpoints failed');
+      client.destroy();
+    });
+
+    it('uses content-type application/octet-stream', async () => {
+      let capturedHeaders: Record<string, string> = {};
+
+      mockFetch.mockImplementation((_url: string, init: any) => {
+        if (init?.headers) {
+          capturedHeaders = init.headers;
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      });
+
+      const client = new NozomiClient('key', { keepWarmInterval: 0 });
+      (client as any).cachedEndpoints = [
+        { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 5 },
+      ];
+
+      await client.sendBatch([fakeTx()]);
+
+      expect(capturedHeaders['Content-Type']).toBe('text/plain');
+      client.destroy();
+    });
+  });
+
+  describe('exports', () => {
+    it('exports NOZOMI_EDGE_ENDPOINT constant', () => {
+      expect(NOZOMI_EDGE_ENDPOINT).toBe('https://edge.nozomi.temporal.xyz');
+    });
+
+    it('NOZOMI_ENDPOINTS includes edge endpoint', () => {
+      expect(NOZOMI_ENDPOINTS.some(e => e.url === NOZOMI_EDGE_ENDPOINT)).toBe(true);
     });
   });
 });

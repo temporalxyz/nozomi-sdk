@@ -23,8 +23,12 @@ export const NOZOMI_ENDPOINTS_URL = 'https://raw.githubusercontent.com/temporalx
 /** Auto-routed endpoint (always included as fallback by default) */
 export const NOZOMI_AUTO_ENDPOINT = 'https://nozomi.temporal.xyz';
 
+/** Edge endpoint (geo-DNS routed, always included in transaction sends) */
+export const NOZOMI_EDGE_ENDPOINT = 'https://edge.nozomi.temporal.xyz';
+
 /** Hardcoded fallback endpoints with regions */
 export const NOZOMI_ENDPOINTS: EndpointConfig[] = [
+  { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', type: 'auto' },
   { url: NOZOMI_AUTO_ENDPOINT, region: 'auto', type: 'auto' },
   { url: 'https://pit1.nozomi.temporal.xyz', region: 'pittsburgh', type: 'direct' },
   { url: 'https://tyo1.nozomi.temporal.xyz', region: 'tokyo', type: 'direct' },
@@ -423,7 +427,13 @@ export class NozomiClient {
       ? Buffer.from(serializedTx).toString('base64')
       : btoa(String.fromCharCode(...serializedTx));
 
-    const endpoints = this.cachedEndpoints ?? await this.getEndpoints();
+    const cached = this.cachedEndpoints ?? await this.getEndpoints();
+    // Always include edge endpoint first, then remaining cached endpoints
+    const hasEdge = cached.some(ep => ep.url === NOZOMI_EDGE_ENDPOINT);
+    const endpoints = hasEdge ? cached : [
+      { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 0 },
+      ...cached,
+    ];
     const timeout = options.timeout ?? this.defaultOptions.timeout ?? 5000;
     const maxRetries = options.maxRetries ?? 2;
 
@@ -481,9 +491,127 @@ export class NozomiClient {
     // Extract signature after successful send
     return getTransactionSignature(transaction);
   }
+
+  /**
+   * Send multiple signed transactions in a single batch using /api/sendBatch.
+   * Uses binary wire format (length-prefixed) with application/octet-stream.
+   *
+   * Sends to all cached endpoints in parallel for redundancy.
+   * Transactions are forwarded as they are parsed — if transaction N fails,
+   * transactions 1..N-1 may already be accepted.
+   *
+   * @param transactions - Array of signed transactions (max 16)
+   * @param options - Send options
+   * @returns Promise with array of transaction signatures (base58), one per input transaction
+   * @throws Error if all endpoints fail or input is invalid
+   */
+  async sendBatch(
+    transactions: SolanaTransaction[],
+    options: SendBatchOptions = {}
+  ): Promise<string[]> {
+    if (transactions.length === 0) {
+      throw new Error('sendBatch requires at least one transaction');
+    }
+    if (transactions.length > 16) {
+      throw new Error(`sendBatch supports at most 16 transactions, got ${transactions.length}`);
+    }
+
+    // Serialize all transactions and build the binary wire format:
+    // [len_hi][len_lo][tx_bytes...] repeated for each transaction
+    const serializedTxs = transactions.map(tx => tx.serialize());
+    let totalSize = 0;
+    for (const tx of serializedTxs) {
+      if (tx.length < 66 || tx.length > 1232) {
+        throw new Error(`Transaction size ${tx.length} bytes out of range (66-1232)`);
+      }
+      totalSize += 2 + tx.length; // 2-byte length prefix + payload
+    }
+    if (totalSize > 19744) {
+      throw new Error(`Batch body size ${totalSize} bytes exceeds max 19744`);
+    }
+
+    const body = new Uint8Array(totalSize);
+    let offset = 0;
+    for (const tx of serializedTxs) {
+      body[offset] = (tx.length >> 8) & 0xff;     // len_hi
+      body[offset + 1] = tx.length & 0xff;         // len_lo
+      offset += 2;
+      body.set(tx, offset);
+      offset += tx.length;
+    }
+
+    const cached = this.cachedEndpoints ?? await this.getEndpoints();
+    const hasEdge = cached.some(ep => ep.url === NOZOMI_EDGE_ENDPOINT);
+    const endpoints = hasEdge ? cached : [
+      { url: NOZOMI_EDGE_ENDPOINT, region: 'edge', minTime: 0 },
+      ...cached,
+    ];
+    const timeout = options.timeout ?? this.defaultOptions.timeout ?? 5000;
+    const maxRetries = options.maxRetries ?? 2;
+
+    const sendToEndpoint = async (endpoint: EndpointResult, attempt: number = 0): Promise<{ endpoint: string; success: boolean; error?: string }> => {
+      const url = `${endpoint.url.replace(/\/+$/, '')}/api/sendBatch?c=${this.clientId}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body,
+          signal: controller.signal,
+          keepalive: true,
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return { endpoint: endpoint.url, success: true };
+        }
+
+        const errorText = await response.text().catch(() => '');
+        const error = `HTTP ${response.status}: ${errorText}`;
+        if (attempt < maxRetries) {
+          return sendToEndpoint(endpoint, attempt + 1);
+        }
+        return { endpoint: endpoint.url, success: false, error };
+      } catch (err) {
+        clearTimeout(timeoutId);
+        const error = err instanceof Error ? err.message : 'Unknown error';
+        if (attempt < maxRetries) {
+          return sendToEndpoint(endpoint, attempt + 1);
+        }
+        return { endpoint: endpoint.url, success: false, error };
+      }
+    };
+
+    const results = await Promise.all(endpoints.map(ep => sendToEndpoint(ep)));
+    const successes = results.filter(r => r.success);
+    const failures = results.filter(r => !r.success);
+
+    for (const failure of failures) {
+      console.warn(`[nozomi-sdk] Batch send failed on ${failure.endpoint}: ${failure.error}`);
+    }
+
+    if (successes.length === 0) {
+      const errors = failures.map(f => `${f.endpoint}: ${f.error}`).join('; ');
+      throw new Error(`All endpoints failed: ${errors}`);
+    }
+
+    // Extract signatures client-side (per docs: track before submission to reconcile)
+    const signatures = await Promise.all(transactions.map(tx => getTransactionSignature(tx)));
+    return signatures;
+  }
 }
 
 export interface SendTransactionOptions {
+  /** Timeout per request in ms (default: 5000) */
+  timeout?: number;
+  /** Max retries per endpoint (default: 2) */
+  maxRetries?: number;
+}
+
+export interface SendBatchOptions {
   /** Timeout per request in ms (default: 5000) */
   timeout?: number;
   /** Max retries per endpoint (default: 2) */

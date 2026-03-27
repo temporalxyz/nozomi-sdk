@@ -223,6 +223,7 @@ import {
   findFastestEndpoints,    // Standalone function
   NOZOMI_ENDPOINTS,        // Hardcoded fallback endpoints
   NOZOMI_AUTO_ENDPOINT,    // Auto-routed endpoint URL
+  NOZOMI_EDGE_ENDPOINT,    // Edge endpoint URL (geo-DNS)
   NOZOMI_ENDPOINTS_URL,    // Default endpoints JSON URL
   // Types
   NozomiClientOptions,

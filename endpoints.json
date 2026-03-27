@@ -2,6 +2,7 @@
   "version": 1,
   "updated": "2026-01-07",
   "endpoints": [
+    { "url": "https://edge.nozomi.temporal.xyz", "region": "edge", "type": "auto" },
     { "url": "https://nozomi.temporal.xyz", "region": "auto", "type": "auto" },
     { "url": "https://pit1.nozomi.temporal.xyz", "region": "pittsburgh", "type": "direct" },
     { "url": "https://tyo1.nozomi.temporal.xyz", "region": "tokyo", "type": "direct" },
