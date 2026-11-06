@@ -142,6 +142,8 @@ behavior does not change.
   or ends in `.nozomi.temporal.xyz`. The client sends its API key and
   transactions to the endpoint it picks, so a tampered list must not be able
   to point anywhere else.
+- Use plain `http://` for `direct` endpoints, the fastest way to send; keep
+  `https://` for `cloudflare` and `auto`, which a proxy would redirect.
 - Probe every endpoint in parallel. Each probe opens one new connection and
   sends 5 `GET /ping` round trips on it, timing only the round trips, never the
   handshake. The endpoint's RTT is the fastest of the 5.

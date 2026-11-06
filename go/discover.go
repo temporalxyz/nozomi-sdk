@@ -25,44 +25,57 @@ const (
 	probeTimeout = 5 * time.Second
 )
 
-// Endpoint is a Nozomi endpoint. RTT, set by Discover, is its fastest
-// GET /ping round trip over a warm connection.
+// Endpoint is a Nozomi endpoint. Type is "direct" (a router), "cloudflare"
+// (a router behind Cloudflare) or "auto" (geo-routed). RTT, set by Discover,
+// is its fastest GET /ping round trip over a warm connection.
 type Endpoint struct {
 	URL    string        `json:"url"`
 	Region string        `json:"region"`
+	Type   string        `json:"type"`
 	RTT    time.Duration `json:"-"`
 }
 
 // builtinEndpoints is endpoints.json as of this release, used when ManifestURL
 // can't be read. A test keeps it equal to ../endpoints.json.
 var builtinEndpoints = []Endpoint{
-	{URL: "https://edge.nozomi.temporal.xyz", Region: "edge"},
-	{URL: "https://nozomi.temporal.xyz", Region: "auto"},
-	{URL: "https://pit1.nozomi.temporal.xyz", Region: "pittsburgh"},
-	{URL: "https://tyo1.nozomi.temporal.xyz", Region: "tokyo"},
-	{URL: "https://sgp1.nozomi.temporal.xyz", Region: "singapore"},
-	{URL: "https://ewr1.nozomi.temporal.xyz", Region: "newark"},
-	{URL: "https://ams1.nozomi.temporal.xyz", Region: "amsterdam"},
-	{URL: "https://fra2.nozomi.temporal.xyz", Region: "frankfurt"},
-	{URL: "https://ash1.nozomi.temporal.xyz", Region: "ashburn"},
-	{URL: "https://lax1.nozomi.temporal.xyz", Region: "los-angeles"},
-	{URL: "https://lon1.nozomi.temporal.xyz", Region: "london"},
-	{URL: "https://pit.nozomi.temporal.xyz", Region: "pittsburgh"},
-	{URL: "https://tyo.nozomi.temporal.xyz", Region: "tokyo"},
-	{URL: "https://sgp.nozomi.temporal.xyz", Region: "singapore"},
-	{URL: "https://ewr.nozomi.temporal.xyz", Region: "newark"},
-	{URL: "https://ams.nozomi.temporal.xyz", Region: "amsterdam"},
-	{URL: "https://fra.nozomi.temporal.xyz", Region: "frankfurt"},
-	{URL: "https://ash.nozomi.temporal.xyz", Region: "ashburn"},
-	{URL: "https://lax.nozomi.temporal.xyz", Region: "los-angeles"},
-	{URL: "https://lon.nozomi.temporal.xyz", Region: "london"},
+	{URL: "https://edge.nozomi.temporal.xyz", Region: "edge", Type: "auto"},
+	{URL: "https://nozomi.temporal.xyz", Region: "auto", Type: "auto"},
+	{URL: "https://pit1.nozomi.temporal.xyz", Region: "pittsburgh", Type: "direct"},
+	{URL: "https://tyo1.nozomi.temporal.xyz", Region: "tokyo", Type: "direct"},
+	{URL: "https://sgp1.nozomi.temporal.xyz", Region: "singapore", Type: "direct"},
+	{URL: "https://ewr1.nozomi.temporal.xyz", Region: "newark", Type: "direct"},
+	{URL: "https://ams1.nozomi.temporal.xyz", Region: "amsterdam", Type: "direct"},
+	{URL: "https://fra2.nozomi.temporal.xyz", Region: "frankfurt", Type: "direct"},
+	{URL: "https://ash1.nozomi.temporal.xyz", Region: "ashburn", Type: "direct"},
+	{URL: "https://lax1.nozomi.temporal.xyz", Region: "los-angeles", Type: "direct"},
+	{URL: "https://lon1.nozomi.temporal.xyz", Region: "london", Type: "direct"},
+	{URL: "https://pit.nozomi.temporal.xyz", Region: "pittsburgh", Type: "cloudflare"},
+	{URL: "https://tyo.nozomi.temporal.xyz", Region: "tokyo", Type: "cloudflare"},
+	{URL: "https://sgp.nozomi.temporal.xyz", Region: "singapore", Type: "cloudflare"},
+	{URL: "https://ewr.nozomi.temporal.xyz", Region: "newark", Type: "cloudflare"},
+	{URL: "https://ams.nozomi.temporal.xyz", Region: "amsterdam", Type: "cloudflare"},
+	{URL: "https://fra.nozomi.temporal.xyz", Region: "frankfurt", Type: "cloudflare"},
+	{URL: "https://ash.nozomi.temporal.xyz", Region: "ashburn", Type: "cloudflare"},
+	{URL: "https://lax.nozomi.temporal.xyz", Region: "los-angeles", Type: "cloudflare"},
+	{URL: "https://lon.nozomi.temporal.xyz", Region: "london", Type: "cloudflare"},
 }
 
 // Discover pings every published endpoint in parallel and returns the
 // reachable ones, fastest first. The list comes from ManifestURL, or a
-// built-in copy if that can't be read.
+// built-in copy if that can't be read. Direct routers are used over plain
+// HTTP, the fastest way to send; proxied and geo-routed endpoints stay on
+// https.
 func Discover(ctx context.Context) ([]Endpoint, error) {
-	return probeAll(ctx, knownEndpoints(ctx))
+	return probeAll(ctx, plainHTTP(knownEndpoints(ctx)))
+}
+
+func plainHTTP(eps []Endpoint) []Endpoint {
+	for i, e := range eps {
+		if e.Type == "direct" {
+			eps[i].URL = "http://" + strings.TrimPrefix(e.URL, "https://")
+		}
+	}
+	return eps
 }
 
 func knownEndpoints(ctx context.Context) []Endpoint {

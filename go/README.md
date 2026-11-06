@@ -31,8 +31,13 @@ the client is warm.
 With no `Endpoint`, `New` runs `nozomi.Discover`:
 - It reads the published endpoint list, falling back to a built-in copy.
 - It keeps only hosts under `nozomi.temporal.xyz`.
+- It uses plain HTTP for direct routers, the fastest way to send. The
+  Cloudflare-fronted and geo-routed endpoints stay on https.
 - It times 5 `/ping` round trips on a fresh connection to each endpoint, in
   parallel, and connects to the fastest.
+
+Plain HTTP sends the API key in the clear. If that matters on your network,
+set `Endpoint` to an `https://` URL.
 
 To pin a region instead, set `Endpoint`, or call `Discover` yourself:
 

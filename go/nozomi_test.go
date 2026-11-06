@@ -279,6 +279,10 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("builtinEndpoints differs from ../endpoints.json:\n%v", got)
 	}
 
+	if eps := plainHTTP(slices.Clone(builtinEndpoints)); eps[2].URL != "http://pit1.nozomi.temporal.xyz" || eps[0].URL != builtinEndpoints[0].URL || eps[11].URL != builtinEndpoints[11].URL {
+		t.Fatalf("direct endpoints must be plain http, others https: %v", eps[:12])
+	}
+
 	got := parseManifest(strings.NewReader(`{"endpoints":[
 		{"url":"https://evil.example.com","region":"a"},
 		{"url":"http://ams1.nozomi.temporal.xyz","region":"b"},
