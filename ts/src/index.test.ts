@@ -107,7 +107,7 @@ describe('findFastestEndpoints', () => {
   describe('remote endpoint fetching', () => {
     it('uses remote endpoints when available', async () => {
       const remoteEndpoints: EndpointConfig[] = [
-        { url: 'https://custom.nozomi.xyz', region: 'custom', type: 'direct' }
+        { url: 'https://custom.nozomi.temporal.xyz', region: 'custom', type: 'direct' }
       ];
 
       mockFetch.mockImplementation((url: string) => {
@@ -123,7 +123,7 @@ describe('findFastestEndpoints', () => {
         includeAutoRouted: false
       });
 
-      expect(results.some(r => r.url === 'https://custom.nozomi.xyz')).toBe(true);
+      expect(results.some(r => r.url === 'https://custom.nozomi.temporal.xyz')).toBe(true);
     });
 
     it('falls back to hardcoded endpoints on 404', async () => {
@@ -206,7 +206,7 @@ describe('findFastestEndpoints', () => {
 
     it('filters out invalid endpoints from manifest', async () => {
       const remoteEndpoints = [
-        { url: 'https://valid.nozomi.xyz', region: 'valid', type: 'direct' },
+        { url: 'https://valid.nozomi.temporal.xyz', region: 'valid', type: 'direct' },
         { url: '', region: 'empty-url', type: 'direct' },
         { url: 'http://insecure.xyz', region: 'insecure', type: 'direct' },
         { url: 'https://no-region.xyz' },
@@ -235,9 +235,38 @@ describe('findFastestEndpoints', () => {
       expect(results.every(r => r.url.startsWith('https://'))).toBe(true);
     });
 
+    it('rejects manifest endpoints outside nozomi.temporal.xyz', async () => {
+      const remoteEndpoints = [
+        { url: 'https://evil.example.com', region: 'a', type: 'direct' },
+        { url: 'http://ams1.nozomi.temporal.xyz', region: 'b', type: 'direct' },
+        { url: 'https://nozomi.temporal.xyz.evil.com', region: 'c', type: 'direct' },
+        { url: 'https://u@ams1.nozomi.temporal.xyz', region: 'd', type: 'direct' },
+        { url: 'https://evil.com#.nozomi.temporal.xyz', region: 'e', type: 'direct' },
+        { url: 'https://ams9.nozomi.temporal.xyz', region: 'ok', type: 'direct' },
+      ];
+
+      mockFetch.mockImplementation((url: string) => {
+        if (url.includes('raw.githubusercontent')) {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ version: 1, endpoints: remoteEndpoints })
+          });
+        }
+        return Promise.resolve({ ok: true });
+      });
+
+      const results = await findFastestEndpoints({
+        pingCount: 1,
+        warmupCount: 0,
+        includeAutoRouted: false
+      });
+
+      expect(results.map(r => r.url)).toEqual(['https://ams9.nozomi.temporal.xyz']);
+    });
+
     it('filters out endpoints with non-string URL', async () => {
       const remoteEndpoints = [
-        { url: 'https://valid.xyz', region: 'valid', type: 'direct' },
+        { url: 'https://valid.nozomi.temporal.xyz', region: 'valid', type: 'direct' },
         { url: 123, region: 'number-url', type: 'direct' },
         { url: ['array'], region: 'array-url', type: 'direct' },
         { url: { nested: 'object' }, region: 'object-url', type: 'direct' },
@@ -264,12 +293,12 @@ describe('findFastestEndpoints', () => {
 
       // Should only include the valid endpoint
       expect(results.length).toBe(1);
-      expect(results[0].url).toBe('https://valid.xyz');
+      expect(results[0].url).toBe('https://valid.nozomi.temporal.xyz');
     });
 
     it('filters out endpoints with missing URL property', async () => {
       const remoteEndpoints = [
-        { url: 'https://valid.xyz', region: 'valid', type: 'direct' },
+        { url: 'https://valid.nozomi.temporal.xyz', region: 'valid', type: 'direct' },
         { region: 'no-url', type: 'direct' }, // Missing url
       ];
 
@@ -293,12 +322,12 @@ describe('findFastestEndpoints', () => {
       });
 
       expect(results.length).toBe(1);
-      expect(results[0].url).toBe('https://valid.xyz');
+      expect(results[0].url).toBe('https://valid.nozomi.temporal.xyz');
     });
 
     it('filters out undefined entries in manifest', async () => {
       const remoteEndpoints = [
-        { url: 'https://valid.xyz', region: 'valid', type: 'direct' },
+        { url: 'https://valid.nozomi.temporal.xyz', region: 'valid', type: 'direct' },
         undefined,
       ];
 
@@ -322,7 +351,7 @@ describe('findFastestEndpoints', () => {
       });
 
       expect(results.length).toBe(1);
-      expect(results[0].url).toBe('https://valid.xyz');
+      expect(results[0].url).toBe('https://valid.nozomi.temporal.xyz');
     });
 
     it('uses custom endpointsUrl when provided', async () => {
@@ -358,7 +387,7 @@ describe('findFastestEndpoints', () => {
             return Promise.reject(new Error('Temporary error'));
           }
           return Promise.resolve(createManifestResponse([
-            { url: 'https://retry-success.xyz', region: 'retry', type: 'direct' }
+            { url: 'https://retry-success.nozomi.temporal.xyz', region: 'retry', type: 'direct' }
           ]));
         }
         return Promise.resolve({ ok: true });
@@ -371,7 +400,7 @@ describe('findFastestEndpoints', () => {
       });
 
       expect(attempts).toBeGreaterThanOrEqual(3);
-      expect(results.some(r => r.url === 'https://retry-success.xyz')).toBe(true);
+      expect(results.some(r => r.url === 'https://retry-success.nozomi.temporal.xyz')).toBe(true);
     });
   });
 

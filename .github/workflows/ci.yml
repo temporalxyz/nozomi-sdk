@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, master]
 
+defaults:
+  run:
+    working-directory: ts
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -22,6 +26,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
+          cache-dependency-path: ts/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -43,9 +48,29 @@ jobs:
         with:
           node-version: 20.x
           cache: 'npm'
+          cache-dependency-path: ts/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Type check
         run: npx tsc --noEmit
+
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
