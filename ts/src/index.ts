@@ -145,6 +145,24 @@ function extractSignatureManually(serializedTx: Uint8Array): string {
   return base58Encode(signatureBytes);
 }
 
+/**
+ * Only endpoints under nozomi.temporal.xyz over https are used from a remote
+ * manifest: the client sends its API key and transactions to them, so a
+ * tampered manifest must not be able to point anywhere else.
+ */
+export function isTrustedEndpointUrl(url: unknown): boolean {
+  if (typeof url !== 'string') return false;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' || u.username || u.password) return false;
+  const host = u.hostname;
+  return host === 'nozomi.temporal.xyz' || host.endsWith('.nozomi.temporal.xyz');
+}
+
 async function fetchEndpointsFromUrl(url: string, timeout: number, retries: number): Promise<EndpointConfig[] | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(attempt * 500);
@@ -160,9 +178,7 @@ async function fetchEndpointsFromUrl(url: string, timeout: number, retries: numb
 
       const manifest: EndpointsManifest = await response.json();
       if (manifest?.endpoints && Array.isArray(manifest.endpoints)) {
-        const valid = manifest.endpoints.filter(
-          e => e?.url && typeof e.url === 'string' && e.url.startsWith('https://') && e.region
-        );
+        const valid = manifest.endpoints.filter(e => e?.region && isTrustedEndpointUrl(e?.url));
         if (valid.length > 0) return valid;
       }
     } catch {

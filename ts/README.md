@@ -243,7 +243,7 @@ import {
 - **Connection keep-warm** - periodic pings to maintain warm HTTP connections
 - **Sorted by latency** - returns endpoints ordered by response time
 - **Warmup pings** - accounts for TLS/TCP connection setup
-- **Remote config** - fetches latest endpoints from GitHub with fallback
+- **Remote config** - fetches latest endpoints from GitHub with fallback; only `https` hosts under `nozomi.temporal.xyz` are accepted
 - **Fully typed** - complete TypeScript definitions
 
 ## License
