@@ -283,6 +283,10 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("direct endpoints must be plain http, others https: %v", eps[:12])
 	}
 
+	if _, err := New(Config{Endpoint: "http://127.0.0.1:1", APIKey: "key", TLS: true}); err == nil || strings.Contains(err.Error(), "dial") {
+		t.Fatalf("TLS with an http endpoint: got %v, want a validation error", err)
+	}
+
 	got := parseManifest(strings.NewReader(`{"endpoints":[
 		{"url":"https://evil.example.com","region":"a"},
 		{"url":"http://ams1.nozomi.temporal.xyz","region":"b"},

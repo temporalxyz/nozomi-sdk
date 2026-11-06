@@ -87,9 +87,9 @@ behavior does not change.
 | Item | Contract |
 |---|---|
 | `MaxBatchTxs = 16`, `MaxTxSize = 4096` | exported constants |
-| `Config` | `Endpoint` (`http://` or `https://`; empty means discover), `APIKey` (required), `Conns` = 4 (at most 64), `PingInterval` = 10 s, `Timeout` = 5 s |
+| `Config` | `Endpoint` (`http://` or `https://`; empty means discover), `APIKey` (required), `TLS` (optional: discovery keeps `https`; an explicit `Endpoint` must then be `https`), `Conns` = 4 (at most 64), `PingInterval` = 10 s, `Timeout` = 5 s |
 | `new(config)` | with no `Endpoint`, runs `discover` within `Timeout` and uses the fastest result; then opens all `Conns` connections before returning; fails only if every one fails |
-| `discover()` | the reachable endpoints as `{url, region, rtt}`, fastest first; an error if none is reachable |
+| `discover(tls?)` | the reachable endpoints as `{url, region, type, rtt}`, fastest first; an error if none is reachable. With `tls`, every endpoint stays on `https` |
 | `client.endpoint()` | the URL the client sends to |
 | `send(tx)` | one signed tx; returns when the router has answered for it |
 | `send_batch(txs)` | any number of txs, sent in runs of 16; each run goes out in order in one request; runs may go out in parallel |
@@ -142,8 +142,9 @@ behavior does not change.
   or ends in `.nozomi.temporal.xyz`. The client sends its API key and
   transactions to the endpoint it picks, so a tampered list must not be able
   to point anywhere else.
-- Use plain `http://` for `direct` endpoints, the fastest way to send; keep
-  `https://` for `cloudflare` and `auto`, which a proxy would redirect.
+- Use plain `http://` for `direct` endpoints, the fastest way to send, unless
+  `tls` was given; keep `https://` for `cloudflare` and `auto`, which a proxy
+  would redirect.
 - Probe every endpoint in parallel. Each probe opens one new connection and
   sends 5 `GET /ping` round trips on it, timing only the round trips, never the
   handshake. The endpoint's RTT is the fastest of the 5.

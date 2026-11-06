@@ -60,13 +60,30 @@ var builtinEndpoints = []Endpoint{
 	{URL: "https://lon.nozomi.temporal.xyz", Region: "london", Type: "cloudflare"},
 }
 
+// Option configures Discover.
+type Option func(*options)
+
+type options struct{ tls bool }
+
+// TLS makes Discover keep every endpoint on https, direct routers included.
+// Plain HTTP is faster; use this when the API key must not travel in the clear.
+var TLS Option = func(o *options) { o.tls = true }
+
 // Discover pings every published endpoint in parallel and returns the
 // reachable ones, fastest first. The list comes from ManifestURL, or a
 // built-in copy if that can't be read. Direct routers are used over plain
-// HTTP, the fastest way to send; proxied and geo-routed endpoints stay on
-// https.
-func Discover(ctx context.Context) ([]Endpoint, error) {
-	return probeAll(ctx, plainHTTP(knownEndpoints(ctx)))
+// HTTP, the fastest way to send, unless TLS is given; proxied and geo-routed
+// endpoints are always https.
+func Discover(ctx context.Context, opts ...Option) ([]Endpoint, error) {
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	eps := knownEndpoints(ctx)
+	if !o.tls {
+		eps = plainHTTP(eps)
+	}
+	return probeAll(ctx, eps)
 }
 
 func plainHTTP(eps []Endpoint) []Endpoint {

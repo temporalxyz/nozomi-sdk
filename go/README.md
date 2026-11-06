@@ -37,14 +37,16 @@ With no `Endpoint`, `New` runs `nozomi.Discover`:
   parallel, and connects to the fastest.
 
 Plain HTTP sends the API key in the clear. If that matters on your network,
-set `Endpoint` to an `https://` URL.
+set `TLS: true` and discovery keeps every endpoint on https, at some cost in
+speed.
 
 To pin a region instead, set `Endpoint`, or call `Discover` yourself:
 
 ```go
-eps, err := nozomi.Discover(ctx) // reachable endpoints, fastest first
+eps, err := nozomi.Discover(ctx)             // reachable endpoints, fastest first
+eps, err  = nozomi.Discover(ctx, nozomi.TLS) // https only
 for _, e := range eps {
-	fmt.Println(e.Region, e.URL, e.RTT)
+	fmt.Println(e.Region, e.Type, e.URL, e.RTT)
 }
 ```
 

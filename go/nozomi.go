@@ -49,6 +49,9 @@ type Config struct {
 	// the fastest endpoint Discover finds.
 	Endpoint string
 	APIKey   string
+	// TLS makes discovery keep every endpoint on https (see Discover). With
+	// an explicit Endpoint it only checks that the URL is https.
+	TLS bool
 	// Conns is the number of persistent connections. Default 4.
 	Conns int
 	// PingInterval is how long a connection may sit idle before a GET /ping
@@ -125,9 +128,13 @@ func New(cfg Config) (*Client, error) {
 		cfg.Timeout = 5 * time.Second
 	}
 
+	var opts []Option
+	if cfg.TLS {
+		opts = append(opts, TLS)
+	}
 	if cfg.Endpoint == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
-		eps, err := Discover(ctx)
+		eps, err := Discover(ctx, opts...)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -137,6 +144,9 @@ func New(cfg Config) (*Client, error) {
 	t, err := parseEndpoint(cfg.Endpoint, cfg.Conns)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.TLS && t.tls == nil {
+		return nil, fmt.Errorf("nozomi: TLS set but Endpoint %q is not https", cfg.Endpoint)
 	}
 
 	c := &Client{
