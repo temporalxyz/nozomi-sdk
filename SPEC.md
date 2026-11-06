@@ -13,8 +13,7 @@ change this spec first, then every SDK. MUST/SHOULD are as in RFC 2119.
 | `GET` | `/ping` | none | keep-alive; `200` with body `pong\n` |
 
 `User-Agent` identifies the SDK and its version in Nozomi's logs. `<lang>` is
-the directory name (`go`, `ts`, ...). The ` (<name>)` part is present only
-when the caller set `Name`. Send the same header on `GET /ping`.
+the directory name (`go`, `ts`, ...). Send the same header on `GET /ping`.
 
 The API key is the query parameter `c`, sent verbatim: the router compares
 it byte for byte and does not percent-decode. `new` rejects a key with a
@@ -25,7 +24,7 @@ character outside printable ASCII, or a space, `&` or `#`.
 ```
 POST /api/sendBatch?c=<api key> HTTP/1.1\r\n
 Host: <host[:port] exactly as in the endpoint URL>\r\n
-User-Agent: nozomi-sdk-<lang>/<version> (<name>)\r\n
+User-Agent: nozomi-sdk-<lang>/<version>\r\n
 Content-Type: application/octet-stream\r\n
 Content-Length: <body length>\r\n
 \r\n
@@ -88,7 +87,7 @@ behavior does not change.
 | Item | Contract |
 |---|---|
 | `MaxBatchTxs = 16`, `MaxTxSize = 4096` | exported constants |
-| `Config` | `Endpoint` (`http://` or `https://`; empty means discover), `APIKey` (required), `Name` (optional: up to 64 bytes of printable ASCII, no parentheses), `Conns` = 4 (at most 64), `PingInterval` = 10 s, `Timeout` = 5 s |
+| `Config` | `Endpoint` (`http://` or `https://`; empty means discover), `APIKey` (required), `Conns` = 4 (at most 64), `PingInterval` = 10 s, `Timeout` = 5 s |
 | `new(config)` | with no `Endpoint`, runs `discover` within `Timeout` and uses the fastest result; then opens all `Conns` connections before returning; fails only if every one fails |
 | `discover()` | the reachable endpoints as `{url, region, rtt}`, fastest first; an error if none is reachable |
 | `client.endpoint()` | the URL the client sends to |
@@ -106,8 +105,7 @@ behavior does not change.
   - `Closed`.
   - The native cancellation error.
   - A validation error, raised before anything is sent, for an empty batch or a
-    tx size outside 1..4096. `new` raises one for a bad API key, `Name` or
-    `Conns`.
+    tx size outside 1..4096. `new` raises one for a bad API key or `Conns`.
 
   A batch with several failed runs returns them combined.
 
@@ -233,9 +231,8 @@ Fake router for tests:
     the server, and `victim` itself is not sent.
 11. **API key.** `new` rejects `""`, `"a b"`, `"a&b"`, `"a#b"`, a newline and a
     non-ASCII key. The key `k+y%2F=1` reaches the server as `c=k+y%2F=1`.
-12. **User-Agent.** `new` rejects a `Name` with a newline, parentheses, a
-    non-ASCII byte or 65 bytes. With `Name` `arb bot 7`, every send and ping
-    carries exactly `nozomi-sdk-<lang>/<version> (arb bot 7)`.
+12. **User-Agent.** Every send and ping carries exactly
+    `nozomi-sdk-<lang>/<version>`.
 
 ## 5. Benchmark
 

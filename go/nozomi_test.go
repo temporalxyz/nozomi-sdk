@@ -378,13 +378,8 @@ func TestAPIKey(t *testing.T) {
 }
 
 func TestUserAgent(t *testing.T) {
-	for _, bad := range []string{"a\nb", "a(b)", "ü", strings.Repeat("n", 65)} {
-		if _, err := New(Config{Endpoint: "http://127.0.0.1:1", APIKey: "key", Name: bad}); err == nil || strings.Contains(err.Error(), "dial") {
-			t.Errorf("Name %q: got %v, want a validation error", bad, err)
-		}
-	}
 	f, srv := start(t, false)
-	c, err := New(Config{Endpoint: srv.URL, APIKey: "key", Conns: 1, Name: "arb bot 7", PingInterval: 20 * time.Millisecond})
+	c, err := New(Config{Endpoint: srv.URL, APIKey: "key", Conns: 1, PingInterval: 20 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +390,7 @@ func TestUserAgent(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // a ping too
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	want := "nozomi-sdk-go/" + Version + " (arb bot 7)"
+	want := "nozomi-sdk-go/" + Version
 	if len(f.ua) != 1 || f.ua[want] < 2 {
 		t.Fatalf("user agents seen: %v, want only %q on sends and pings", f.ua, want)
 	}

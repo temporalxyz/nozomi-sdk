@@ -9,10 +9,7 @@ go get github.com/temporalxyz/nozomi-sdk/go
 ```go
 import nozomi "github.com/temporalxyz/nozomi-sdk/go"
 
-c, err := nozomi.New(nozomi.Config{
-	APIKey: apiKey,
-	Name:   "arb bot 7", // shows in Nozomi's logs as the User-Agent
-}) // connects to the fastest endpoint
+c, err := nozomi.New(nozomi.Config{APIKey: apiKey}) // connects to the fastest endpoint
 if err != nil {
 	return err
 }

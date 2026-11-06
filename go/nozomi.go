@@ -28,6 +28,8 @@ import (
 // Version is reported in the User-Agent of every request.
 const Version = "0.1.0"
 
+const userAgent = "nozomi-sdk-go/" + Version
+
 const (
 	MaxBatchTxs = 16   // router limit per sendBatch request
 	MaxTxSize   = 4096 // protocol maximum per transaction
@@ -47,9 +49,6 @@ type Config struct {
 	// the fastest endpoint Discover finds.
 	Endpoint string
 	APIKey   string
-	// Name identifies this client in Nozomi's logs, as the User-Agent
-	// "nozomi-sdk-go/<Version> (<Name>)". Optional; printable ASCII.
-	Name string
 	// Conns is the number of persistent connections. Default 4.
 	Conns int
 	// PingInterval is how long a connection may sit idle before a GET /ping
@@ -113,18 +112,6 @@ func New(cfg Config) (*Client, error) {
 			return nil, errors.New("nozomi: APIKey has a character that cannot go in a URL query")
 		}
 	}
-	ua := "nozomi-sdk-go/" + Version
-	if cfg.Name != "" {
-		for i := 0; i < len(cfg.Name); i++ {
-			if c := cfg.Name[i]; c < ' ' || c >= 0x7f || c == '(' || c == ')' {
-				return nil, errors.New("nozomi: Name must be printable ASCII without parentheses")
-			}
-		}
-		if len(cfg.Name) > 64 {
-			return nil, errors.New("nozomi: Name over 64 bytes")
-		}
-		ua += " (" + cfg.Name + ")"
-	}
 	if cfg.Conns <= 0 {
 		cfg.Conns = 4
 	}
@@ -159,8 +146,8 @@ func New(cfg Config) (*Client, error) {
 		closed: make(chan struct{}),
 	}
 	c.batchHead = "POST /api/sendBatch?c=" + cfg.APIKey + " HTTP/1.1\r\nHost: " + t.host +
-		"\r\nUser-Agent: " + ua + "\r\nContent-Type: application/octet-stream\r\nContent-Length: "
-	c.pingReq = t.pingReq(ua)
+		"\r\nUser-Agent: " + userAgent + "\r\nContent-Type: application/octet-stream\r\nContent-Length: "
+	c.pingReq = t.pingReq()
 
 	conns := make([]net.Conn, cfg.Conns)
 	errs := make([]error, cfg.Conns)
@@ -316,8 +303,8 @@ func (t *target) dial(ctx context.Context, timeout time.Duration) (net.Conn, err
 	return d.DialContext(ctx, "tcp", t.addr) // Go sets TCP_NODELAY by default
 }
 
-func (t *target) pingReq(ua string) []byte {
-	return []byte("GET /ping HTTP/1.1\r\nHost: " + t.host + "\r\nUser-Agent: " + ua + "\r\n\r\n")
+func (t *target) pingReq() []byte {
+	return []byte("GET /ping HTTP/1.1\r\nHost: " + t.host + "\r\nUser-Agent: " + userAgent + "\r\n\r\n")
 }
 
 // worker owns one connection and serves the queue with it. Its buffers are

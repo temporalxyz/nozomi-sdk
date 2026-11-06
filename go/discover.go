@@ -152,7 +152,7 @@ func probe(ctx context.Context, endpoint string) (time.Duration, error) {
 	cn.SetDeadline(deadline)
 	defer context.AfterFunc(ctx, func() { cn.SetDeadline(time.Now()) })()
 
-	r, req, body := bufio.NewReaderSize(cn, readerSize), t.pingReq("nozomi-sdk-go/"+Version), make([]byte, maxBody)
+	r, req, body := bufio.NewReaderSize(cn, readerSize), t.pingReq(), make([]byte, maxBody)
 	best := time.Duration(math.MaxInt64)
 	for range probePings {
 		start := time.Now()
