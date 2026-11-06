@@ -33,9 +33,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/temporalxyz/nozomi-sdk.git"
+    "url": "git+https://github.com/temporalxyz/nozomi-sdk.git",
+    "directory": "ts"
   },
-  "homepage": "https://github.com/temporalxyz/nozomi-sdk#readme",
+  "homepage": "https://github.com/temporalxyz/nozomi-sdk/tree/main/ts#readme",
   "bugs": {
     "url": "https://github.com/temporalxyz/nozomi-sdk/issues"
   },
